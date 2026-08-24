@@ -13,11 +13,15 @@ by the target location `g`.
 
 ---
 
-## 0. Inputs you must supply
+## Setup
 
-- **Simulator** and the post-design state map `x₁ = h(τ, g)`.
-- **Reward** `r(x, a, τ)`.
-- **Target distribution** `p(g)`, and a held-out set of targets.
+- Simulator: PyBullet
+- Robot: Franka Panda, 7 DoF.
+- Control mode: Position control (joint position targets as deltas from the current pose — q_target = q_current + σ·a) tracked by PyBullet's internal PD.
+- Reward: dense, negative distance from the tool tip to g
+- Randomise the initial arm configuration q₀. 
+- Tools have mass: PyBullet gives this for free if the tool is an actual body in the scene rather than an analytic offset.
+- **Simulator** and the post-design state map `x₁ = h(τ, g)`. Implement it in the autodiff framework instead. This is cheap because only the tool part needs gradients: with the arm at a fixed initial configuration q₀, the gripper pose is a constant, and x₁ tool tip = ( gripper pose at q₀ )  ∘  tool_kinematics(l₁, l₂, θ)
 
 ---
 
