@@ -17,9 +17,9 @@ by the target location `g`.
 
 - Simulator: PyBullet
 - Robot: Franka Panda, 7 DoF.
-- Control mode: Position control (joint position targets as deltas from the current pose — q_target = q_current + σ·a) tracked by PyBullet's internal PD.
-- Reward: dense, negative distance from the tool tip to g
-- Randomise the initial arm configuration q₀. 
+- Control mode: **SE(2) operational space.** The action is 3-dimensional — `(dx, dy, dyaw)` of the hand — accumulated onto an internal target, clipped into a measured workspace rectangle, and solved by IK into the 7 joint position targets that PyBullet's internal PD then tracks. Height, roll and pitch are constants, so the tool is always low and parallel to the ground. Superseded the original 7-DoF joint-delta action (`q_target = q_current + σ·a`): for a task where the tool must stay flat, six of those dimensions are spent rediscovering the joint manifold that keeps it flat. See `panda_with_tool.py`, `se2.py` and `workspace_sweep.py`.
+- Reward: dense, negative distance from the tool tip to g — now in the table plane, since the tip's height is a constant independent of τ.
+- Randomise the initial arm configuration q₀ — drawn as an SE(2) pose from inside the workspace rectangle, not as raw joint angles, so no episode starts pressed against a boundary. 
 - Tools have mass: PyBullet gives this for free if the tool is an actual body in the scene rather than an analytic offset.
 - **Simulator** and the post-design state map `x₁ = h(τ, g)`. Implement it in the autodiff framework instead. This is cheap because only the tool part needs gradients: with the arm at a fixed initial configuration q₀, the gripper pose is a constant, and x₁ tool tip = ( gripper pose at q₀ )  ∘  tool_kinematics(l₁, l₂, θ)
 

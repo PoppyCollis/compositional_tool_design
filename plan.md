@@ -26,8 +26,20 @@
       TOOL_MOUNT_ROLL`, composed with the pitch via `tool_urdf._compose_mount_rpy`.
       See `[[memory.md]]`.
 
+- [x] **SE(2) control.** Action is now `(dx, dy, dyaw)` of the hand, 3-DoF instead
+      of 7, with height/roll/pitch pinned so the tool is always low and parallel to
+      the ground. New `se2.py` (pure math), `SE2Config`, `workspace_sweep.py`
+      (offline calibration), `se2_demo.py`, and 108 new tests. See `[[memory.md]]`
+      for the design decisions and the four bugs found on the way: link-frame vs
+      centre-of-mass readback, IK ignoring joint limits, measured-relative
+      integration compounding solver residual into a 25 cm drift, and untrackable
+      step sizes tilting the tool mid-motion.
+
 ## Next
-- [ ] Wrap `PandaWithTool` in a gymnasium env with a task + reward.
+- [ ] Wrap `PandaWithTool` in a gymnasium env with a task + reward, on top of the
+      SE(2) action space. Object and goal both sampled from `SE2Config.WORKSPACE`
+      (the goal has to be somewhere the hand can actually reach). Observation
+      normalised against the same box. No penalty for hitting the boundary.
 - [ ] Stand up `SubprocVecEnv` with per-env tau; confirm scaling against the numbers above.
 - [ ] Wire the PPO loop and the outer design-optimisation loop.
 
@@ -40,6 +52,10 @@ Profile first. If it does bite, hold tau fixed for K episodes per env before rew
 anything: K=10 cuts the cost 10x for a few lines, and 64 envs still give 64 designs per
 update. `createMultiBody` is the last resort — it drops link names, joint limits, and
 off-diagonal inertia (silently), and needs a second construction path kept in sync.
+
+**`workspace_sweep.py` accepts self-intersecting arm configurations.** It screens on
+the achieved hand pose, not on whether the arm passes through itself getting there —
+see the self-collision item below. Revisit together.
 
 **Arm/tool self-collision is off.** `loadURDF` disables self-collision within a
 multi-body by default, and nothing here passes `flags=p.URDF_USE_SELF_COLLISION`.

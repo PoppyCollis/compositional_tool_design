@@ -2,6 +2,8 @@ import math
 
 import torch
 
+import se2
+
 DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 
@@ -46,6 +48,111 @@ class ArmConfig:
     """
 
     NEUTRAL_JOINT_VALUES = (0.00, 0.41, 0.00, -1.85, 0.00, 2.26, 0.79)
+
+    # (lower, upper) for panda_joint1..7, from assets/franka_panda/panda.urdf.
+    # Duplicated here rather than parsed because config.py does no I/O at import
+    # and assets/ is gitignored; tests/test_se2_control.py re-checks them against
+    # the live URDF, the same guard _check_tcp_offset gives the gripper constants.
+    #
+    # These are passed to calculateInverseKinematics, which otherwise ignores
+    # limits entirely and happily winds panda_joint7 past its +-2.9671 stop. That
+    # is not a harmless overshoot: PyBullet's motors *do* enforce limits when
+    # stepping, so the joint saturates, the hand lands somewhere other than the
+    # commanded pose, and the tool tilts with nothing reporting an error.
+    JOINT_LIMITS = (
+        (-2.9671, 2.9671),
+        (-1.8326, 1.8326),
+        (-2.9671, 2.9671),
+        (-3.1416, 0.0),
+        (-2.9671, 2.9671),
+        (-0.0873, 3.8223),
+        (-2.9671, 2.9671),
+    )
+
+
+class SE2Config:
+    """Constants for the flat, fixed-height SE(2) controller (see se2.py).
+
+    WORKSPACE is the single source of truth for where the hand may go: the
+    per-step clipper, the reset sampler and the observation normaliser all read
+    this one box. Defining it twice is how the three quietly drift apart.
+    """
+
+    # Height of the tool's centreline above the table top, which panda-gym puts at
+    # z=0 (PyBullet.create_table: "Top is z=0"). Low enough to catch a block, high
+    # enough to clear the surface.
+    TOOL_Z = 0.02
+
+    # World height of the panda_hand origin. With the fingers pointing straight down
+    # the hand's +z axis is world -z, so the tool -- welded TCP_OFFSET_Z out along
+    # that axis -- sits exactly this far below the hand, for every tau. See se2.py's
+    # module docstring for why the tip's height carries no tau dependence.
+    HAND_Z = TOOL_Z + GripperConfig.TCP_OFFSET_Z
+
+    # Measured by workspace_sweep.py with the robot base at the origin: the largest
+    # rectangle in which the arm can hold the tool flat (tilt < 1 deg, height within
+    # 2 mm) at every yaw, inset by SWEEP_MARGIN. A robot based elsewhere translates
+    # it (se2.Box.translate), which PandaWithTool does at construction.
+    # Measured 2026-08-25: 81x101 cells at 1 cm over 12 yaws, largest all-clean
+    # rectangle x[0.350, 0.650] y[-0.410, 0.410], inset by SWEEP_MARGIN.
+    WORKSPACE = se2.Box(x_min=0.380, x_max=0.620, y_min=-0.380, y_max=0.380)
+
+    # Hand yaw is clipped to +-YAW_LIMIT, exactly as x and y are clipped to
+    # WORKSPACE, and the sweep only accepts a cell if it is clean across this whole
+    # range. Yaw is not free: the tool points along the hand's +x axis, so yaw near
+    # +-pi aims it back at the robot's own base, which needs panda_joint7 wound into
+    # the dead band beyond its +-2.9671 stop. Restricting the range instead of
+    # accepting a tiny workspace -- workspace_sweep.py prints the trade for a
+    # spread of candidates. At +-90 deg the clean rectangle is 0.24 x 0.76 m;
+    # +-45 deg would buy 50% more area but halve the headings the tool can take,
+    # which matters more to a hooking policy than a few cm of depth.
+    YAW_LIMIT = math.pi / 2
+
+    # Inset applied to the swept region, for tracking error now and for the real arm
+    # not matching the model later. The sweep says where it just barely works.
+    SWEEP_MARGIN = 0.03
+
+    # Further inset for reset sampling, so an episode never starts already pressed
+    # against a wall with half its action range dead.
+    RESET_MARGIN = 0.05
+
+    # Metres and radians per unit action. Deliberately a fifth of panda-gym's 0.05
+    # m/step: panda-gym constrains only position, so its transient tracking error
+    # costs nothing, whereas here a lagging arm is a *tilted* one. Interpolating in
+    # joint space between two flat IK solutions does not stay flat, so an untrackable
+    # step dips the tool mid-motion even though both endpoints are level. Measured at
+    # 0.05 the tool dived 41 mm and leaned 2.8 deg while moving; at 0.01 the worst
+    # transient is 0.8 mm and 0.11 deg. Still 0.25 m/s at 25 Hz, which crosses the
+    # workspace in ~24 steps.
+    #
+    # YAW_SCALE is twice POS_SCALE so that a ~0.5 m tool's tip, on its lever arm,
+    # moves about as far per step from turning as from translating.
+    POS_SCALE = 0.01
+    YAW_SCALE = 0.02
+    VEL_SCALE = 0.5    # m/s (and rad/s) normaliser for the velocity terms in get_obs
+
+    # How far the commanded target may get ahead of where the hand actually is,
+    # in metres and radians -- roughly three steps' worth.
+    #
+    # The target is integrated internally rather than re-read from the arm each
+    # step. Re-reading sounds safer, and it does stop the target running past the
+    # workspace, but it also feeds the IK solver's residual back into its own input:
+    # the solver lands a fraction of a millimetre off, that becomes next step's
+    # starting point, and the error compounds. Measured at 300 steps of *zero*
+    # action, the hand crept up to 25 cm. An integrated target is exactly unchanged
+    # by a zero action.
+    #
+    # The clamp then restores what re-reading was for. Clipping to WORKSPACE already
+    # stops the target escaping the table; this stops it escaping the *arm* when the
+    # hand is blocked by an object rather than a boundary, so the moment the
+    # obstruction clears the arm does not lunge for a target metres away.
+    MAX_LAG = 0.03
+    MAX_YAW_LAG = 0.06
+
+    # calculateInverseKinematics iterates from the current joint state, so a single
+    # call will not converge over a large jump. Only reset and the sweep need this;
+    # per-step targets are one POS_SCALE away and converge in one call.
+    IK_ROUNDS = 8
 
 
 class DesignPriorConfig:

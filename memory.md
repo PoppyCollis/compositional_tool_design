@@ -1,8 +1,7 @@
 # Memory
 
 ## Current focus
-Audit + hardening of the tau -> tool -> URDF -> PyBullet pipeline, ahead of PPO
-co-design training.
+SE(2) control layer is in. Next is the task + reward on top of it.
 
 ## Key decisions
 
@@ -44,6 +43,53 @@ co-design training.
   `spawn_demo.py`'s analytic FK check applies it via `geom._rotation_from_rpy`
   before composing with `R_hand` — it only consumes the resulting rotation
   matrix, so it's agnostic to how TOOL_MOUNT_RPY was derived.
+
+- **Control is SE(2), not joint space.** The action is `(dx, dy, dyaw)` of the
+  *hand* (not the tool tip), with height/roll/pitch pinned. Commanding the hand
+  keeps the action space, workspace and reset distribution identical for every
+  τ; the tip's pose is then recovered in closed form, whereas the reverse — a
+  τ-independent action space — is not recoverable if you command the tip.
+- **Why the tip's height carries no τ dependence.** `TOOL_MOUNT_RPY` maps tool +z
+  to hand +x and the φ-bend plane to the hand's x-y plane, so in the hand frame
+  `tip = (l1 + l2·cos φ, l2·sin φ, TCP_OFFSET_Z)`. The z component is constant, so
+  pinning the hand's height pins the tool's for every design, and φ hooks *in* the
+  ground plane. `se2.py`'s docstring carries the derivation; three tests assert it
+  rather than trusting it.
+- **Integrated target + lag clamp, not measured-relative.** Re-reading the hand
+  pose each step and adding the nudge sounds safer and does stop the target running
+  past the workspace, but it feeds the IK residual back into its own input: 300
+  steps of *zero* action crept the hand up to 25 cm. The target is now accumulated
+  internally (a zero action leaves it exactly unchanged, drift ~1.7 mm) and clamped
+  to `MAX_LAG` of the measured pose, which restores what re-reading was for —
+  bounding the target when an *object* blocks the hand, as opposed to a boundary,
+  which the workspace clip already handles.
+- **Both clips happen before IK, never after.** Afterwards the solver has already
+  bought the extra reach by tilting the wrist.
+- **IK must be given the joint limits.** `calculateInverseKinematics` ignores them
+  unless all four null-space arguments are passed, and winds `panda_joint7` past
+  its ±2.9671 stop for yaws near ±π. PyBullet's motors *do* enforce limits when
+  stepping, so the joint saturates and the hand quietly settles somewhere other
+  than commanded. Costs ~1-2 mm of tracking accuracy, which buys repeatable
+  redundancy resolution.
+- **Read the link frame, not the centre of mass.** panda-gym's `get_link_position`
+  / `get_link_orientation` return `getLinkState` indices 0/1 — the link's CoM —
+  while IK targets the URDF link frame (indices 4/5). For `panda_hand` those are
+  4 cm apart. They coincide for `tool_tip`, so `get_ee_position` is unaffected.
+- **Workspace is measured, not guessed.** `workspace_sweep.py` grids the table at
+  1 cm over 12 yaws, keeps only cells where the achieved pose is genuinely flat,
+  takes the largest all-clean rectangle and insets it. Yaw is a clipped dimension
+  like x and y: at ±90° the clean rectangle is 0.24 × 0.76 m, but demanding the
+  full circle collapses it to 0.01 m² — the tool points along hand +x, so yaw near
+  ±π aims it back at the robot's own base. One `SE2Config.WORKSPACE` is read by the
+  clipper, the reset sampler and the observation normaliser.
+- **No boundary penalty, deliberately.** Clipping already handles it — the arm
+  stalls, the object does not move, the reward does not come. An explicit penalty
+  makes the policy timid exactly where it needs to work.
+- **`POS_SCALE` is 0.01 m/step, a fifth of panda-gym's.** panda-gym constrains only
+  position, so its transient tracking error is free; here a lagging arm is a
+  *tilted* one, because a joint-space blend between two flat IK solutions is not
+  itself flat. At 0.05 the tool dived 41 mm and leaned 2.8° mid-motion; at 0.01 the
+  worst transient across all designs is 2.2 mm and 0.13°.
 
 ## Measured performance (this machine)
 
