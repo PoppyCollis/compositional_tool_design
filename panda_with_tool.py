@@ -8,11 +8,12 @@ from gymnasium import spaces
 from panda_gym.envs.core import PyBulletRobot
 
 import panda_with_tool_urdf
+from config import ArmConfig
 from utils.helpers import get_link_index_by_name
 
 JOINT_INDICES = np.array([0, 1, 2, 3, 4, 5, 6])
 JOINT_FORCES = np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
-NEUTRAL_JOINT_VALUES = np.array([0.00, 0.41, 0.00, -1.85, 0.00, 2.26, 0.79])
+NEUTRAL_JOINT_VALUES = np.array(ArmConfig.NEUTRAL_JOINT_VALUES)
 MAX_JOINT_DELTA = 0.05  # rad, per control step
 
 

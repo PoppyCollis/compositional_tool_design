@@ -21,6 +21,29 @@ co-design training.
 - **Geometry is per-design, never batched.** `_unpack` raises on a `(B, 3)` tau.
   Parallelism for PPO comes from N separate PyBullet clients (SubprocVecEnv), each
   handling one tau — there is no batch dimension for the geometry layer to exploit.
+- **Tool mount orientation: 90° pitch + 90° roll, no azimuth param.** The
+  `hand_to_tool` weld (`panda_with_tool_urdf.py`) used to have `rpy="0 0 0"`, so
+  the tool extended in line with the fingers. It now pitches by
+  `GripperConfig.TOOL_MOUNT_PITCH` (pi/2, about panda_hand's y-axis) so the tool
+  extends perpendicular to the fingers — parallel to the ground when the
+  fingers point straight down. On top of that it's rolled by
+  `GripperConfig.TOOL_MOUNT_ROLL` (pi/2, about the tool's *own* long axis,
+  tool-frame +z) before the pitch is applied — this leaves the pointing
+  direction unchanged (rotating about +z fixes +z) and only spins the tool's
+  x-z bend plane, i.e. which plane phi's elbow deflection bends in
+  (`tool_geometry.py` docstring), relative to the fingers.
+  `tool_urdf._compose_mount_rpy(pitch, roll)` composes `R = Ry(pitch) @
+  Rz(roll)` and decomposes it back into a single rpy triple, since URDF's rpy
+  is fixed-axis roll-pitch-yaw about the *parent's* original axes
+  (`R = Rz(yaw)@Ry(pitch)@Rx(roll)`) — naively writing `(roll, pitch, 0)`
+  would rotate about the parent's x-axis instead of the tool's own z-axis and
+  swing the tool to point somewhere else. Deliberately no azimuth parameter on
+  the weld: which horizontal direction the tool points is left to the arm's
+  existing wrist joint (panda_joint7), which rotates panda_hand about its own
+  z-axis. `tool_urdf.TOOL_MOUNT_RPY` is the single source of truth;
+  `spawn_demo.py`'s analytic FK check applies it via `geom._rotation_from_rpy`
+  before composing with `R_hand` — it only consumes the resulting rotation
+  matrix, so it's agnostic to how TOOL_MOUNT_RPY was derived.
 
 ## Measured performance (this machine)
 

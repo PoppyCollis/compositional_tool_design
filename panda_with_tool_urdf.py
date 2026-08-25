@@ -108,7 +108,10 @@ def build_panda_with_tool_urdf(tau):
     weld_joint = ET.SubElement(root, "joint", {"name": "hand_to_tool", "type": "fixed"})
     ET.SubElement(weld_joint, "parent", {"link": "panda_hand"})
     ET.SubElement(weld_joint, "child", {"link": "tool"})
-    ET.SubElement(weld_joint, "origin", {"xyz": tool_urdf._xyz_str(tool_urdf.TCP_OFFSET), "rpy": "0 0 0"})
+    ET.SubElement(weld_joint, "origin", {
+        "xyz": tool_urdf._xyz_str(tool_urdf.TCP_OFFSET),
+        "rpy": tool_urdf._xyz_str(tool_urdf.TOOL_MOUNT_RPY),
+    })
 
     return tree
 

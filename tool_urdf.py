@@ -1,11 +1,38 @@
 """tau -> URDF XML for the 2-link tool. Standalone-loadable (tool as root link)."""
 import xml.etree.ElementTree as ET
 
+import numpy as np
+
 import tool_geometry as geom
 from config import GripperConfig
 
 TOOL_TIP_MASS = 1e-6  # massless-but-not-zero, so PyBullet accepts the link
 TCP_OFFSET = (0.0, 0.0, GripperConfig.TCP_OFFSET_Z)  # panda_hand -> TCP, per the Franka spec
+
+
+def _compose_mount_rpy(pitch, roll):
+    """Single hand_to_tool weld rpy equivalent to rolling the tool about its
+    own long axis (tool frame +z) and then pitching that axis outward:
+    R = Ry(pitch) @ Rz(roll). Can't just write (roll, pitch, 0) -- URDF's rpy
+    is fixed-axis roll-then-pitch-then-yaw about the *parent's* original axes
+    (R = Rz(yaw) @ Ry(pitch) @ Rx(roll), see tool_geometry._rotation_from_rpy),
+    which rotates about the parent's x-axis, not the tool's own z-axis, so it
+    would swing the tool to point somewhere else entirely instead of just
+    spinning it in place. This composes the intended rotation directly and
+    decomposes it back into the one rpy triple URDF can express.
+    """
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    rz = np.array([[cr, -sr, 0.0], [sr, cr, 0.0], [0.0, 0.0, 1.0]])
+    ry = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+    r = ry @ rz
+    out_roll = np.arctan2(r[2, 1], r[2, 2])
+    out_pitch = np.arcsin(-r[2, 0])
+    out_yaw = np.arctan2(r[1, 0], r[0, 0])
+    return (float(out_roll), float(out_pitch), float(out_yaw))
+
+
+TOOL_MOUNT_RPY = _compose_mount_rpy(GripperConfig.TOOL_MOUNT_PITCH, GripperConfig.TOOL_MOUNT_ROLL)
 
 
 def _xyz_str(v):

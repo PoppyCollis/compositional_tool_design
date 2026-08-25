@@ -8,6 +8,7 @@ import numpy as np
 import pybullet as p
 
 import panda_with_tool_urdf as pwt
+from config import ArmConfig
 
 TAUS = [
     (0.3, 0.3, 0.0),         # straight (phi=0, longest tool)
@@ -17,7 +18,7 @@ TAUS = [
     (0.5, 0.15, -1.9),       # bound extremes, mirrored
 ]
 
-HOLD_SECONDS = 3.0
+HOLD_SECONDS = 10.0
 
 
 def main():
@@ -32,6 +33,8 @@ def main():
         path = pwt.write_panda_with_tool_urdf(tau)
         body = p.loadURDF(path, useFixedBase=True)
         pwt.disable_finger_tool_collision(body)
+        for joint_idx, angle in enumerate(ArmConfig.NEUTRAL_JOINT_VALUES):
+            p.resetJointState(body, joint_idx, angle)
         print(f"tau={tau} -> {path}")
 
         t0 = time.time()

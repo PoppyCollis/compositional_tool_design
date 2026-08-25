@@ -36,7 +36,9 @@ def main():
     hand_idx = get_link_index_by_name(body_id, "panda_hand")
     hand_pos, hand_orn = p.getLinkState(body_id, hand_idx)[4:6]
     R_hand = np.array(p.getMatrixFromQuaternion(hand_orn)).reshape(3, 3)
-    analytic_tip_world = np.array(hand_pos) + R_hand @ (np.array(tool_urdf.TCP_OFFSET) + geom.tip_position(l1, l2, phi))
+    R_mount = geom._rotation_from_rpy(tool_urdf.TOOL_MOUNT_RPY)  # hand_to_tool weld orientation
+    tip_in_hand = np.array(tool_urdf.TCP_OFFSET) + R_mount @ geom.tip_position(l1, l2, phi)
+    analytic_tip_world = np.array(hand_pos) + R_hand @ tip_in_hand
 
     print(f"FK tool_tip (world):       {fk_tip}")
     print(f"analytic tool_tip (world): {analytic_tip_world}")
