@@ -18,8 +18,8 @@ HOLD_STEPS = 200
 def main():
     torch_tau = ToolPrior().sample(1)[0]
     tau = tuple(float(v) for v in torch_tau.detach())
-    l1, l2, theta = tau
-    print(f"tau = (l1={l1:.4f}, l2={l2:.4f}, theta={theta:.4f})")
+    l1, l2, phi = tau
+    print(f"tau = (l1={l1:.4f}, l2={l2:.4f}, phi={phi:.4f})")
 
     sim = PyBullet(render_mode="rgb_array")
     robot = PandaWithTool(sim, tau)
@@ -36,7 +36,7 @@ def main():
     hand_idx = get_link_index_by_name(body_id, "panda_hand")
     hand_pos, hand_orn = p.getLinkState(body_id, hand_idx)[4:6]
     R_hand = np.array(p.getMatrixFromQuaternion(hand_orn)).reshape(3, 3)
-    analytic_tip_world = np.array(hand_pos) + R_hand @ (np.array(tool_urdf.TCP_OFFSET) + geom.tip_position(l1, l2, theta))
+    analytic_tip_world = np.array(hand_pos) + R_hand @ (np.array(tool_urdf.TCP_OFFSET) + geom.tip_position(l1, l2, phi))
 
     print(f"FK tool_tip (world):       {fk_tip}")
     print(f"analytic tool_tip (world): {analytic_tip_world}")

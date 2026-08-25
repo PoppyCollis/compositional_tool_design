@@ -2,9 +2,10 @@
 import xml.etree.ElementTree as ET
 
 import tool_geometry as geom
+from config import GripperConfig
 
 TOOL_TIP_MASS = 1e-6  # massless-but-not-zero, so PyBullet accepts the link
-TCP_OFFSET = (0.0, 0.0, 0.1034)  # panda_hand -> TCP, per the Franka spec
+TCP_OFFSET = (0.0, 0.0, GripperConfig.TCP_OFFSET_Z)  # panda_hand -> TCP, per the Franka spec
 
 
 def _xyz_str(v):
@@ -21,18 +22,18 @@ def _add_box_geom_elements(parent, box, name_prefix):
         ET.SubElement(geometry, "box", {"size": _xyz_str(box["size"])})
 
 
-def build_tool_link_elements(l1, l2, theta):
+def build_tool_link_elements(l1, l2, phi):
     """Build the 'tool' and 'tool_tip' <link> elements plus the joint welding them,
-    for the given (l1, l2, theta). Shared by the standalone tool URDF and by
+    for the given (l1, l2, phi). Shared by the standalone tool URDF and by
     panda_with_tool_urdf.py, which splices these into the full Panda URDF.
 
     Returns (tool_link, tip_link, tip_joint) Elements, unattached to any tree.
     """
-    specs = geom.box_specs(l1, l2, theta)
+    specs = geom.box_specs(l1, l2, phi)
     m = geom.mass(l1, l2)
-    com = geom.combined_com(l1, l2, theta)
-    inertia = geom.inertia_tensor(l1, l2, theta)
-    tip = geom.tip_position(l1, l2, theta)
+    com = geom.combined_com(l1, l2, phi)
+    inertia = geom.inertia_tensor(l1, l2, phi)
+    tip = geom.tip_position(l1, l2, phi)
 
     tool_link = ET.Element("link", {"name": "tool"})
     _add_box_geom_elements(tool_link, specs["box1"], "box1")
@@ -62,10 +63,10 @@ def build_tool_link_elements(l1, l2, theta):
     return tool_link, tip_link, tip_joint
 
 
-def build_tool_urdf(l1, l2, theta):
+def build_tool_urdf(l1, l2, phi):
     """Build the standalone URDF ElementTree for the tool ('tool' is the root link,
     loadable on its own)."""
-    tool_link, tip_link, tip_joint = build_tool_link_elements(l1, l2, theta)
+    tool_link, tip_link, tip_joint = build_tool_link_elements(l1, l2, phi)
 
     robot = ET.Element("robot", {"name": "tool"})
     robot.append(tool_link)
@@ -75,8 +76,8 @@ def build_tool_urdf(l1, l2, theta):
 
 
 def tau_to_urdf_string(tau):
-    l1, l2, theta = geom._unpack(tau)
-    robot = build_tool_urdf(l1, l2, theta)
+    l1, l2, phi = geom._unpack(tau)
+    robot = build_tool_urdf(l1, l2, phi)
     return ET.tostring(robot, encoding="unicode")
 
 

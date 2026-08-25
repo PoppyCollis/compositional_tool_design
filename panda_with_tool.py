@@ -21,7 +21,7 @@ class PandaWithTool(PyBulletRobot):
 
     Args:
         sim (PyBullet): Simulation instance.
-        tau: (l1, l2, theta) tool design parameters.
+        tau: (l1, l2, phi) tool design parameters.
         base_position (np.ndarray, optional): Base position, as (x, y, z).
     """
 

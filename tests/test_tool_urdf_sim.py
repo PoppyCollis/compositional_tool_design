@@ -12,24 +12,25 @@ import tool_urdf
 @pytest.fixture(scope="module")
 def physics_client():
     cid = p.connect(p.DIRECT)
-    p.setPhysicsEngineParameter(enableFileCaching=0)
+    # Caching left ON deliberately: _urdf_path_for hashes tau into the filename,
+    # so distinct designs never collide in PyBullet's path-keyed cache.
     yield cid
     p.disconnect(cid)
 
 
-def _urdf_path_for(tmp_path, l1, l2, theta):
-    key = hashlib.sha1(f"{l1}_{l2}_{theta}".encode()).hexdigest()[:12]
+def _urdf_path_for(tmp_path, l1, l2, phi):
+    key = hashlib.sha1(f"{l1}_{l2}_{phi}".encode()).hexdigest()[:12]
     return os.path.join(tmp_path, f"tool_{key}.urdf")
 
 
-@pytest.mark.parametrize("l1,l2,theta", [
+@pytest.mark.parametrize("l1,l2,phi", [
     (0.2, 0.3, np.pi / 2),
-    (0.15, 0.5, np.pi),
-    (0.5, 0.15, 0.3),
+    (0.15, 0.5, 0.0),
+    (0.5, 0.15, 1.9),
 ])
-def test_tool_fk_and_mass_match_analytic(physics_client, tmp_path, l1, l2, theta):
-    path = _urdf_path_for(tmp_path, l1, l2, theta)
-    tool_urdf.write_urdf((l1, l2, theta), path)
+def test_tool_fk_and_mass_match_analytic(physics_client, tmp_path, l1, l2, phi):
+    path = _urdf_path_for(tmp_path, l1, l2, phi)
+    tool_urdf.write_urdf((l1, l2, phi), path)
 
     body_id = p.loadURDF(path, useFixedBase=False)
 
@@ -42,7 +43,7 @@ def test_tool_fk_and_mass_match_analytic(physics_client, tmp_path, l1, l2, theta
     link_state = p.getLinkState(body_id, tip_link_idx, computeForwardKinematics=True)
     fk_tip = np.array(link_state[4])  # worldLinkFramePosition
 
-    analytic_tip = geom.tip_position(l1, l2, theta)
+    analytic_tip = geom.tip_position(l1, l2, phi)
     np.testing.assert_allclose(fk_tip, analytic_tip, atol=1e-6)
 
     tool_link_idx = link_names.get("tool", -1)

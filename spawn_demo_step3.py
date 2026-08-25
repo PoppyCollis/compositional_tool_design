@@ -10,10 +10,11 @@ import pybullet as p
 import panda_with_tool_urdf as pwt
 
 TAUS = [
+    (0.3, 0.3, 0.0),         # straight (phi=0, longest tool)
     (0.3, 0.3, np.pi / 2),   # bent at a right angle
-    (0.3, 0.3, np.pi),       # straight
-    (0.3, 0.3, 1e-3),        # folded back on itself
-    (0.15, 0.5, 2.0),        # bound extremes
+    (0.3, 0.3, -np.pi / 2),  # mirror image
+    (0.15, 0.5, 1.9),        # bound extremes: shortest handle, longest head, max fold
+    (0.5, 0.15, -1.9),       # bound extremes, mirrored
 ]
 
 HOLD_SECONDS = 3.0
@@ -21,7 +22,9 @@ HOLD_SECONDS = 3.0
 
 def main():
     p.connect(p.GUI)
-    p.setPhysicsEngineParameter(enableFileCaching=0)
+    # File caching stays ON: write_panda_with_tool_urdf gives every distinct tau
+    # its own hashed path, so there is no stale-reload risk, and the cache holds
+    # the Panda meshes -- identical across all tau, ~6x the load time to re-parse.
     p.setGravity(0, 0, -9.81)
     p.resetDebugVisualizerCamera(cameraDistance=1.2, cameraYaw=45, cameraPitch=-30, cameraTargetPosition=[0, 0, 0.5])
 
