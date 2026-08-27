@@ -123,9 +123,13 @@ then the gymnasium env + reward. Sweep and push regions are still open.
   per-point (for env-time queries); `reach_mask` rasterises the Minkowski sum by integer
   cell shifts and is ~200-460x faster (for maps and the 2000-design coverage pass, 52 min
   -> 6 s). They agree except within one cell of the boundary, which a test asserts.
-- **A rectangle is a poor fit for these regions.** They are annular shells with a notch;
-  the discriminating band is 0.467 m2 but its largest inscribed box is 0.075 m2. Prefer
-  rejection sampling against the mask/predicate over pasting an `se2.Box`.
+- **Do not fit a rectangle to these regions** — `reach_sweep.py` deliberately reports
+  areas only. They are annular shells with the near-field notch cut out, so the largest
+  inscribed box in the discriminating band is 0.075 m2 of a 0.471 m2 region, and it lands
+  in the outer shell: sampling it would sample "long tools win" and nothing else. Sample
+  `s_start` by rejection against `task_space.tip_reachable`. (`largest_rectangle` still
+  lives in `task_space` because `workspace_sweep` needs it — the *hand* workspace really
+  is a rectangle, since the controller clips to one.)
 
 ## Measured performance (this machine)
 

@@ -305,24 +305,6 @@ def largest_rectangle(mask):
     return best[1]
 
 
-def box_for_mask(mask, xs, ys):
-    """The largest all-True rectangle in a mask, as an ``se2.Box`` in metres.
-
-    Args:
-        mask (np.ndarray): Boolean array of shape ``(len(xs), len(ys))``.
-        xs (np.ndarray): Grid x coordinates.
-        ys (np.ndarray): Grid y coordinates.
-
-    Returns:
-        se2.Box: The rectangle, or None if the mask is empty.
-    """
-    rect = largest_rectangle(mask)
-    if rect is None:
-        return None
-    i0, i1, j0, j1 = rect
-    return se2.Box(x_min=xs[i0], x_max=xs[i1], y_min=ys[j0], y_max=ys[j1])
-
-
 def print_map(mask, xs, ys, rect=None, legend=("#", "+", ".")):
     """ASCII map of a boolean mask, optionally with a chosen rectangle overlaid.
 

@@ -90,19 +90,23 @@ def describe(label, tau, xs, ys, no_tool, cell_area):
     return mask
 
 
-def print_band_boxes(coverage, xs, ys, cell_area):
-    """Largest inscribed rectangle for each coverage band, ready to paste."""
-    print(f"\n  {'band':<38} {'cells':>7} {'area':>7}  largest inscribed rectangle")
+def print_bands(coverage, cell_area):
+    """Area of each coverage band.
+
+    Areas only, deliberately: these regions are annular shells with a notch cut out
+    of the near field (see the blind column above), so the largest axis-aligned
+    rectangle inside one throws most of it away and picks a sliver of the outer
+    shell -- which would sample "long tools win" and nothing else. Sample s_start by
+    rejection against task_space.tip_reachable instead of against a box.
+
+    Args:
+        coverage (np.ndarray): Fraction-of-designs map from task_space.coverage.
+        cell_area (float): Area of one grid cell, in m2.
+    """
+    print(f"\n  {'band':<38} {'cells':>7} {'area (m2)':>10}")
     for label, lo, hi in BANDS:
         mask = (coverage >= lo) & (coverage <= hi)
-        box = ts.box_for_mask(mask, xs, ys)
-        if box is None:
-            print(f"  {label:<38} {mask.sum():7d} {mask.sum() * cell_area:7.3f}  (empty)")
-            continue
-        area = (box.x_max - box.x_min) * (box.y_max - box.y_min)
-        print(f"  {label:<38} {mask.sum():7d} {mask.sum() * cell_area:7.3f}  "
-              f"se2.Box(x_min={box.x_min:.3f}, x_max={box.x_max:.3f}, "
-              f"y_min={box.y_min:.3f}, y_max={box.y_max:.3f})   [{area:.4f} m2]")
+        print(f"  {label:<38} {mask.sum():7d} {mask.sum() * cell_area:10.3f}")
 
 
 def measure_gripper():
@@ -264,7 +268,7 @@ def main():
     taus = ToolPrior().sample(N_PRIOR).detach().cpu().numpy()
     coverage = ts.coverage(xs, ys, SE2Config.WORKSPACE, taus, SE2Config.YAW_LIMIT,
                            tol=TaskConfig.R_OBJ)
-    print_band_boxes(coverage, xs, ys, cell_area)
+    print_bands(coverage, cell_area)
 
     reachable = coverage > 0
     discriminating = (coverage > 0) & (coverage < 1)
@@ -277,9 +281,8 @@ def main():
     if args.map:
         for label, lo, hi in BANDS:
             mask = (coverage >= lo) & (coverage <= hi)
-            print(f"\n{label}  ('#' inside the largest rectangle, '+' in band, '.' not)")
-            ts.print_map(mask[::4, ::4], xs[::4], ys[::4],
-                         ts.largest_rectangle(mask[::4, ::4]))
+            print(f"\n{label}  ('+' in band, '.' not)")
+            ts.print_map(mask[::4, ::4], xs[::4], ys[::4])
 
 
 if __name__ == "__main__":

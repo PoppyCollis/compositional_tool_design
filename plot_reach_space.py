@@ -7,10 +7,16 @@ Two panels, both over the same table grid:
          the tip lies on a circle of radius R rather than in a disk, so a longer
          tool trades a near-target blind zone for outer reach.
 
-  right  coverage -- the fraction of ToolPrior designs that can reach each cell.
-         The 0 < f < 1 band is where the design is load-bearing; at f = 1 every
-         tool succeeds and p(tau | g, O=1) cannot separate from the prior, which is
-         the failure mode the diagnostic in ai_docs/task_encoding_g.md looks for.
+  right  coverage -- the fraction of ToolPrior designs that can reach each cell,
+         with the discriminating band outlined. The 0 < f < 1 band is where the
+         design is load-bearing; at f = 1 every tool succeeds and p(tau | g, O=1)
+         cannot separate from the prior, which is the failure mode the diagnostic in
+         ai_docs/task_encoding_g.md looks for.
+
+No rectangle is fitted to the band on purpose: it is an annular shell with the near-
+field notch cut out of it, so the largest box inside it is a sliver of the outer edge
+that would sample "long tools win" and nothing else. Sample s_start by rejection
+against task_space.tip_reachable instead.
 
 Pure geometry -- no PyBullet, so this runs in a second and needs no sweep.
 
@@ -29,7 +35,7 @@ from reach_sweep import (BANDS, CANONICAL_TAUS, N_PRIOR, RESOLUTION, X_RANGE,
 from tool_design_prior import ToolPrior
 from utils.plots import plot_workspace
 
-# The band whose largest inscribed rectangle gets drawn on the coverage panel.
+# The band outlined on the coverage panel.
 HIGHLIGHT_BAND = "discriminating    (0.2 <= f <= 0.8)"
 
 
@@ -71,15 +77,11 @@ def main():
 
     label, lo, hi = next(b for b in BANDS if b[0] == HIGHLIGHT_BAND)
     band = (coverage >= lo) & (coverage <= hi)
-    boxes = [(SE2Config.WORKSPACE, "SE2Config.WORKSPACE (hand)",
-              dict(color="black", linestyle="--", linewidth=1.5))]
-    box = ts.box_for_mask(band, xs, ys)
-    if box is not None:
-        boxes.append((box, f"largest box in {label.split('(')[0].strip()} band",
-                      dict(color="red", linewidth=2)))
 
     plot_workspace(
-        xs, ys, coverage, boxes=boxes,
+        xs, ys, coverage,
+        boxes=[(SE2Config.WORKSPACE, "SE2Config.WORKSPACE (hand)",
+                dict(color="black", linestyle="--", linewidth=1.5))],
         contours=[(band, f"{label.split('(')[0].strip()} band",
                    dict(colors=["red"], linestyles="dotted"))],
         title=(f"Fraction of {args.n_prior} ToolPrior designs that can reach\n"

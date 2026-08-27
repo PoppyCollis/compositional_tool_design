@@ -299,7 +299,7 @@ def test_coverage_rejects_an_empty_design_set():
         ts.coverage(xs, ys, BOX, [], PSI)
 
 
-# -- largest_rectangle / box_for_mask -----------------------------------------
+# -- largest_rectangle ---------------------------------------------------------
 
 def test_largest_rectangle_of_an_all_true_mask_is_the_whole_mask():
     assert ts.largest_rectangle(np.ones((4, 6), dtype=bool)) == (0, 3, 0, 5)
@@ -323,20 +323,6 @@ def test_largest_rectangle_ignores_a_hole():
     i0, i1, j0, j1 = ts.largest_rectangle(mask)
     assert not (i0 <= 2 <= i1 and j0 <= 2 <= j1)
     assert (i1 - i0 + 1) * (j1 - j0 + 1) == 10  # the 2x5 half either side of the hole
-
-
-def test_box_for_mask_returns_the_rectangle_in_metres():
-    xs, ys, _ = ts.grid((0.0, 0.4), (-0.2, 0.2), 0.1)
-    mask = np.zeros((len(xs), len(ys)), dtype=bool)
-    mask[1:3, 2:4] = True
-    box = ts.box_for_mask(mask, xs, ys)
-    assert (box.x_min, box.x_max) == pytest.approx((xs[1], xs[2]))
-    assert (box.y_min, box.y_max) == pytest.approx((ys[2], ys[3]))
-
-
-def test_box_for_mask_of_an_empty_mask_is_none():
-    xs, ys, _ = ts.grid((0.0, 0.4), (-0.2, 0.2), 0.1)
-    assert ts.box_for_mask(np.zeros((len(xs), len(ys)), dtype=bool), xs, ys) is None
 
 
 # -- grid ---------------------------------------------------------------------
