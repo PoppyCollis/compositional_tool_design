@@ -155,11 +155,43 @@ class SE2Config:
     IK_ROUNDS = 8
 
 
+class TaskConfig:
+    """Object and target geometry for the task encoding (ai_docs/task_encoding_g.md).
+
+    SE2Config.WORKSPACE says where the *hand* may go. These say where an *object*
+    may sit, which is a different question and the one `s_start` and `p_target` are
+    drawn from. The regions themselves are computed by task_space.py and mapped by
+    reach_sweep.py; only the scalars live here.
+    """
+
+    # Max object radius, as a plan-view disk. The maps are all computed at this
+    # value: a smaller object is strictly easier to reach, so a region measured at
+    # the maximum is valid for every object the task samples.
+    #
+    # The tool's cross-section spans z in [TOOL_Z - H/2, TOOL_Z + H/2] = [0.01, 0.03],
+    # so an object shorter than ~1 cm is passed over rather than touched. At 3 cm
+    # radius the object is 3x the tool's own 2 cm cross-section, so "getting around
+    # it" stays a real geometric constraint rather than a rounding error.
+    R_OBJ = 0.03
+
+    # Circumradius of the closed gripper's planar footprint at TOOL_Z, measured from
+    # the panda_hand origin. Measured 2026-08-27 by reach_sweep.py --measure-gripper:
+    # only the two fingers reach the tool plane (they span z=[0.0075, 0.0692], while
+    # panda_hand itself bottoms out at z=0.0538), with a circumradius of 0.0429 m.
+    # Rounded up, which errs towards calling a target hand-reachable and so towards
+    # *under*-claiming the region that genuinely needs a tool.
+    #
+    # Used only to define the bare-arm band WORKSPACE (+) Disk(R_OBJ + GRIPPER_RADIUS):
+    # the counterfactual a tool has to beat. A target inside it is solvable with no
+    # tool at all, so it carries no design signal whatever the policy does.
+    GRIPPER_RADIUS = 0.045
+
+
 class DesignPriorConfig:
 
     # For l1 and l2
-    L_MIN = 0.15
-    L_MAX = 0.5 # meters; sane band for a link on the franka panda arm
+    L_MIN = 0.1
+    L_MAX = 0.2 # meters; sane band for a link on the franka panda arm
 
     # tau[2] is phi, the deflection of link 2 from straight: phi=0 is a straight
     # rod (the longest tool), phi -> +-pi folds link 2 back along link 1. The

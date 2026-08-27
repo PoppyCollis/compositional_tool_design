@@ -35,7 +35,29 @@
       integration compounding solver residual into a 25 cm drift, and untrackable
       step sizes tilting the tool mid-motion.
 
+- [x] **Reach-task object placement map.** New `task_space.py` (pure geometry: reach
+      regions, coverage over the design prior, mask helpers moved out of
+      `workspace_sweep.py`), `se2.tip_polar`, `config.TaskConfig`, `reach_sweep.py`
+      (tables + candidate boxes + `--verify` against PyBullet FK + `--measure-gripper`),
+      `plot_reach_space.py`, and 87 new tests. See `[[memory.md]]` for the two geometric
+      facts it surfaced: alpha rotates the reachable half-plane independently of reach,
+      and long tools have a near-target blind zone because the tip is on a circle rather
+      than in a disk.
+
 ## Next
+- [ ] **Choose `s_start` / `p_target` for reaching** off the coverage map — the maps are
+      built, the constant is not. Prefer rejection sampling against
+      `task_space.tip_reachable` over an `se2.Box`; the regions are annular and a
+      rectangle throws most of them away (0.467 m2 band -> 0.075 m2 box).
+- [ ] **Sweep and push regions.** Deferred from the reach work and genuinely harder: they
+      turn on the *contact normal* (the unit vector from the closest point of the tool
+      polyline to the object centre), not on tip position. To sweep, that normal must
+      point inward, which forces tool material to sit *beyond* the object — the "get
+      around it" condition. Needs the tool as a two-segment polyline (hand, `hand +
+      l1*u(psi)`, tip) inflated by `tool_geometry.W/2`, plus a transport-ray check that
+      the contact survives as the object crosses the reach boundary. Note a straight rod
+      *can* hook off its own end cap, so a tip-position-only test scores it almost as well
+      as an L and will not separate designs.
 - [ ] Wrap `PandaWithTool` in a gymnasium env with a task + reward, on top of the
       SE(2) action space. Object and goal both sampled from `SE2Config.WORKSPACE`
       (the goal has to be somewhere the hand can actually reach). Observation

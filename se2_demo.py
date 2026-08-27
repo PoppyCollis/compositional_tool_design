@@ -21,10 +21,10 @@ from config import DesignPriorConfig, SE2Config
 from panda_with_tool import PandaWithTool
 
 TAUS = [
-    (0.3, 0.3, 0.0),                                # straight rod
-    (0.3, 0.3, np.pi / 2),                          # right-angled hook
-    (0.15, 0.5, DesignPriorConfig.PHI_MAX),         # short handle, long head, max fold
-    (0.5, 0.15, -DesignPriorConfig.PHI_MAX),        # mirrored extreme
+    (0.1, 0.1, 0.0),                                # straight rod
+    (0.1, 0.1, np.pi / 2),                          # right-angled hook
+    (0.1, 0.2, DesignPriorConfig.PHI_MAX),         # short handle, long head, max fold
+    (0.2, 0.1, -DesignPriorConfig.PHI_MAX),        # mirrored extreme
 ]
 
 HOLD = 40      # steps per leg of the square

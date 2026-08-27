@@ -25,7 +25,7 @@ from workspace_sweep import SWEEP_TAU, X_RANGE, Y_RANGE, RESOLUTION, N_YAW, swee
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", default=None, help="Path to save the figure to.")
-    args = parser.parse_args()
+    args = parser.parse_args()  
 
     sim = PyBullet(render_mode="rgb_array")
     robot = PandaWithTool(sim, SWEEP_TAU)

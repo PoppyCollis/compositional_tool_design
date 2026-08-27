@@ -228,6 +228,39 @@ def tip_offset(tau):
     return np.array([l1 + l2 * np.cos(phi), l2 * np.sin(phi)])
 
 
+def tip_polar(tau):
+    """Tool-tip offset from the hand in polar form, as ``(radius, bearing)``.
+
+    The same offset ``tip_offset`` returns, re-expressed so the world tip reads as
+    a single rotation of the hand's yaw::
+
+        tip_from_hand((x, y, psi), tau) == (x, y) + radius * (cos(psi + bearing),
+                                                              sin(psi + bearing))
+
+    Concretely ``radius = sqrt(l1^2 + l2^2 + 2*l1*l2*cos(phi))`` and
+    ``bearing = -atan2(l2*sin(phi), l1 + l2*cos(phi))``, though it is computed from
+    ``tip_offset`` rather than restated, so there is one source of truth.
+
+    This is the form the workspace geometry needs. Yaw is clipped to
+    ``+-SE2Config.YAW_LIMIT``, so the tip's bearing from the hand is confined to
+    ``[bearing - YAW_LIMIT, bearing + YAW_LIMIT]``: tau does not merely set how far
+    the tip reaches, it *rotates the half-plane of directions it can reach in*. A
+    straight rod has ``bearing = 0`` and can never point its tip backwards, whatever
+    its length. Note also that the radius is exact, not an upper bound -- the tip
+    lies on a circle about the hand, not in a disk -- so a long tool cannot reach a
+    target close to the hand.
+
+    Args:
+        tau: Design parameters ``(l1, l2, phi)``.
+
+    Returns:
+        tuple: ``(radius, bearing)`` in metres and radians, the bearing in
+            ``(-pi, pi]`` and measured in the hand's yawed frame.
+    """
+    ox, oy = tip_offset(tau)
+    return float(np.hypot(ox, oy)), float(np.arctan2(-oy, ox))
+
+
 def tip_from_hand(hand_se2, tau):
     """Tool-tip position in the table plane, in closed form.
 

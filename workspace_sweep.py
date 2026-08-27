@@ -18,8 +18,10 @@ import pybullet as p
 from panda_gym.pybullet import PyBullet
 
 import se2
+import task_space
 from config import ArmConfig, SE2Config
 from panda_with_tool import PandaWithTool
+from task_space import largest_rectangle
 
 # The hand target is tau-independent (se2.py module docstring), so any design does.
 SWEEP_TAU = (0.3, 0.3, 0.0)
@@ -95,59 +97,6 @@ def sweep(robot, xs, ys, yaws):
     return masks
 
 
-def largest_rectangle(mask):
-    """Largest all-True axis-aligned rectangle in a boolean mask.
-
-    Standard maximal-rectangle-in-histogram scan: build the run of consecutive True
-    cells ending at each row, then for each row solve the largest-rectangle-in-a-
-    histogram problem with a monotonic stack. O(n*m).
-
-    Args:
-        mask (np.ndarray): 2D boolean array.
-
-    Returns:
-        tuple: (i0, i1, j0, j1) inclusive index bounds, or None if mask is all False.
-    """
-    n_rows, n_cols = mask.shape
-    heights = np.zeros(n_cols, dtype=int)
-    best = (0, None)
-
-    for i in range(n_rows):
-        heights = np.where(mask[i], heights + 1, 0)
-        stack = []  # (start_col, height), heights strictly increasing
-        for j in range(n_cols + 1):
-            h = heights[j] if j < n_cols else 0
-            start = j
-            while stack and stack[-1][1] >= h:
-                col, height = stack.pop()
-                area = height * (j - col)
-                if area > best[0]:
-                    best = (area, (i - height + 1, i, col, j - 1))
-                start = col
-            if h > 0:
-                stack.append((start, h))
-
-    return best[1]
-
-
-def print_map(mask, xs, ys, rect):
-    """ASCII map of the mask with the chosen rectangle overlaid.
-
-    matplotlib is not installed and utils/plots.py is empty; a new dependency is
-    not worth it for a script run once.
-    """
-    i0, i1, j0, j1 = rect if rect else (-1, -2, -1, -2)
-    print(f"\n  rows = x from {xs[0]:+.2f} to {xs[-1]:+.2f}, "
-          f"cols = y from {ys[0]:+.2f} to {ys[-1]:+.2f}")
-    print("  '#' clean and inside the rectangle, '+' clean, '.' not clean\n")
-    for i in range(len(xs)):
-        row = "".join(
-            ("#" if i0 <= i <= i1 and j0 <= j <= j1 else "+") if mask[i, j] else "."
-            for j in range(len(ys))
-        )
-        print(f"  x={xs[i]:+.2f} |{row}|")
-
-
 def box_for(masks, yaws, xs, ys, half_width):
     """Largest clean rectangle when yaw is restricted to +-half_width.
 
@@ -201,7 +150,9 @@ def main():
     chosen = SE2Config.YAW_LIMIT
     raw, inset, _ = box_for(masks, yaws, xs, ys, chosen)
     keep = np.abs(np.array([se2.wrap_angle(y) for y in yaws])) <= chosen + 1e-9
-    print_map(masks[keep].all(axis=0), xs, ys, largest_rectangle(masks[keep].all(axis=0)))
+    mask = masks[keep].all(axis=0)
+    print("\n  '#' clean and inside the rectangle, '+' clean, '.' not clean\n")
+    task_space.print_map(mask, xs, ys, largest_rectangle(mask))
 
     if inset is None:
         print("\nNothing clean across the configured yaw range. Lower SE2Config.YAW_LIMIT.")

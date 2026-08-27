@@ -1,7 +1,9 @@
 # Memory
 
 ## Current focus
-SE(2) control layer is in. Next is the task + reward on top of it.
+SE(2) control layer is in, and the **reach**-task object placement map on top of it
+(`task_space.py`, `reach_sweep.py`). Next: pick the `s_start` constant off those maps,
+then the gymnasium env + reward. Sweep and push regions are still open.
 
 ## Key decisions
 
@@ -90,6 +92,40 @@ SE(2) control layer is in. Next is the task + reward on top of it.
   *tilted* one, because a joint-space blend between two flat IK solutions is not
   itself flat. At 0.05 the tool dived 41 mm and leaned 2.8° mid-motion; at 0.01 the
   worst transient across all designs is 2.2 mm and 0.13°.
+- **Object placement is a different question from hand placement.** `SE2Config.WORKSPACE`
+  is where the *hand* may go; `task_space.py` turns that into where an *object* may sit.
+  For reaching it is closed form and needs no sim sweep:
+  `Reach(tau) = (WORKSPACE (+) Arc(R, [alpha-Psi, alpha+Psi])) (+) Disk(r_obj)`, tested
+  against PyBullet FK to 2.4 mm across every canonical design (`reach_sweep.py --verify`;
+  that 2.4 mm is the arm's IK residual, not a geometry error).
+- **`se2.tip_polar(tau) -> (R, alpha)` is the form that makes the design space legible.**
+  `R = sqrt(l1^2+l2^2+2*l1*l2*cos phi)`, `alpha = -atan2(l2 sin phi, l1 + l2 cos phi)`, and
+  the tip sits at `hand + R*u(yaw + alpha)`. Two consequences that drive everything:
+  - **alpha rotates the accessible half-plane of tip bearings**, which is a *separate* axis
+    from reach. Yaw is clipped to +-90 deg, so bearings span `[alpha-90, alpha+90]`. A
+    straight rod has `alpha=0` and can never point its tip backwards however long it is —
+    its region stops dead at the workspace's own inner edge (x=0.35). `(0.1, 0.2, 1.9)`
+    reaches bearing -169 deg for only 0.193 m of reach and gets in to x=0.256.
+  - **The tip is on a *circle* of radius R, not in a disk, so long tools have a
+    near-target blind zone.** Reach is not monotone in length: `(0.2, 0.2, 0)` reaches
+    0.400 m but cannot touch the workspace centre with `tol=0`, and is blind to 0.035 m2
+    of the bare arm's own reach. The `blind` column of `reach_sweep.py` measures this.
+- **The coverage map is the thing to sample `s_start` from.** `task_space.coverage` gives
+  the fraction of `ToolPrior` designs reaching each cell. `f=1` cells carry no design
+  signal (every tool succeeds, so `p(tau|g,O=1)` stays the prior) and `f=0` are
+  impossible; the band between is where the §7 diagnostic in `task_encoding_g.md` can
+  bite. Measured at r_obj=0.03: 1.328 m2 reachable by some tool, of which 1.089 m2 (82%)
+  discriminates and 0.902 m2 of that is also out of the bare arm's reach.
+- **`s_start` cannot depend on tau.** It is a field of `g`, so a tau-conditioned start
+  region would make `g` depend on the design and break the factorisation. Hence the
+  regions are always aggregated across the prior, never taken per-design.
+- **Two implementations of the same set, deliberately.** `tip_reachable` is exact and
+  per-point (for env-time queries); `reach_mask` rasterises the Minkowski sum by integer
+  cell shifts and is ~200-460x faster (for maps and the 2000-design coverage pass, 52 min
+  -> 6 s). They agree except within one cell of the boundary, which a test asserts.
+- **A rectangle is a poor fit for these regions.** They are annular shells with a notch;
+  the discriminating band is 0.467 m2 but its largest inscribed box is 0.075 m2. Prefer
+  rejection sampling against the mask/predicate over pasting an `se2.Box`.
 
 ## Measured performance (this machine)
 
@@ -107,6 +143,16 @@ bottleneck**: tau is redrawn every episode reset, so at 64 envs x 512 steps with
 50-step episodes that is ~655 loads = 26.2 s against 0.80 s of stepping.
 
 ## Gotchas
+
+- `TaskConfig.GRIPPER_RADIUS = 0.045` is measured, not guessed: only the two *fingers*
+  reach the tool plane (they span z=[0.0075, 0.0692]; `panda_hand` itself bottoms out at
+  z=0.0538), circumradius 0.0429 m from the hand origin. Re-measure with
+  `python reach_sweep.py --measure-gripper`. Rounded up on purpose — that errs towards
+  calling a target hand-reachable, i.e. towards *under*-claiming the tool-required region.
+- `reach_sweep.py --verify` must assert on **closed-form-vs-FK**, not tip-to-target. The
+  region is "tip within r_obj of the centre", so a boundary target has the tip grazing the
+  surface at exactly r_obj by construction and the IK residual carries it a couple of mm
+  past. Asserting on tip-to-target fails on correct geometry.
 
 - `assets/` is **gitignored** and regenerated from `pybullet_data` by
   `ensure_assets()`. Anything touching `PANDA_URDF_PATH` must call it first.
