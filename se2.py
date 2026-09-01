@@ -317,3 +317,31 @@ def tip_from_hand(hand_se2, tau):
     ox, oy = tip_offset(tau)
     c, s = np.cos(yaw), np.sin(yaw)
     return np.array([x + c * ox + s * oy, y + s * ox - c * oy])
+
+
+def elbow_from_hand(hand_se2, tau):
+    """Elbow position in the table plane, in closed form.
+
+    The joint between the tool's two links, and the second of the design's two
+    channels into the observation. It is what makes tau *exactly* recoverable from
+    ``x_t``: the tip alone pins only ``(l1 + l2*cos(phi), l2*sin(phi))``, two numbers
+    out of three, so ``l1`` is unrecoverable and ``tau -> x1`` is not injective.
+    Adding the elbow gives ``l1`` from ``hand -> elbow`` and ``(l2, phi)`` from
+    ``elbow -> tip``. See ``ai_docs/networks_and_design_gradient.md`` section 2.
+
+    Note the absence of the sign flip on ``y`` that ``tip_from_hand`` carries. That
+    is not an oversight: the mount rotation sends the tool's long axis (tool frame
+    +z) to hand +x, so the elbow's hand-frame offset is ``(l1, 0, TCP_OFFSET_Z)``,
+    and the pi roll of the fingers-down pose only touches the ``y`` component --
+    which is zero here. The elbow therefore lies along hand +x, at ``u(psi)``.
+
+    Args:
+        hand_se2: Hand pose as ``(x, y, yaw)``.
+        tau: Design parameters ``(l1, l2, phi)``. Only ``l1`` is read.
+
+    Returns:
+        np.ndarray: Elbow position as ``(x, y)``.
+    """
+    x, y, yaw = (float(v) for v in hand_se2)
+    l1, _, _ = geom._unpack(tau)
+    return np.array([x + l1 * np.cos(yaw), y + l1 * np.sin(yaw)])

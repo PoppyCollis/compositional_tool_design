@@ -18,12 +18,24 @@
     zero tool-table contacts. The tool spans z in [0.01, 0.03] against measured
     transients of 2.2-3 mm, so the 1 cm clearance is real but has never been checked
     against an actual surface. Revisit with the self-collision item below.
-- [ ] **Observation layout 21 -> 24, before anything is trained.** See
-  `ai_docs/networks_and_design_gradient.md`: add the elbow (2) and `t / HORIZON` (1),
-  drop `tau` from both networks, and add the parameter-free feature layer. Touches
-  `se2.elbow_from_hand`, `PandaWithTool.get_obs` (`ROBOT_DIM` 9 -> 11),
-  `initial_state` (`OBS_DIM`, slice constants, `TAU_SLICES`, `h`), and `reach_env`.
-  Every one of these changes `OBS_DIM`, so they land together or not at all.
+- [x] **Observation layout 21 -> 24.** Landed: the elbow at `7:9`, `t / HORIZON` at
+  `23:24`, `ROBOT_DIM` 9 -> 11, `TAU_SLICES` three wide, `dh/dtau` now rank 3.
+- [ ] **The parameter-free feature layer, and the design-space encoding.** The rest of
+  `ai_docs/networks_and_design_gradient.md` §6-§7. A module holding `features(x)` --
+  fixed arithmetic recovering `(o_x, o_y, l1, l2, phi)` from `x` -- shared by actor,
+  critic and designer, and frozen under the same rule as `SCENE_BOX`. Deferred to the
+  PPO pass because both of its readers are the PPO pass. The recovery arithmetic
+  already exists, tested, in
+  `tests/test_initial_state.test_tau_is_exactly_recoverable_from_x1`: lift it, do not
+  rewrite it. Drop `tau` from both networks at the same time (§1) -- there is nothing
+  to drop it from yet.
+- [ ] **Walk the ridge, once `V` exists.** Three design knobs, two outcomes that
+  matter, so every tool sits on a curve of exactly-equivalent tools --
+  `(0.120, 0.180, 0)` and `(0.180, 0.120, 0)` share a tip. Before the elbow they shared
+  an observation too and the network was *forced* to score them equally; now their
+  elbows are 6 cm apart, so flatness along the ridge is a test rather than a
+  tautology, and a tilt is a preference invented from noise in the returns. See
+  `ai_docs/networks_and_design_gradient.md` §4.
 - [ ] **PPO observation normalisation must be off, or verifiably frozen.** If the
   implementation wraps envs in `VecNormalize` or equivalent by default, the running
   mean/var makes `x -> x_tilde` a moving map. `initial_state.h` reapplies that exact

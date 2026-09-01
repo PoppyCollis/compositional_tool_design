@@ -165,3 +165,38 @@ def test_tip_from_hand_keeps_the_tool_length_under_rotation():
     for yaw in YAWS:
         tip = se2.tip_from_hand((0.45, -0.1, yaw), tau)
         assert np.linalg.norm(tip - np.array([0.45, -0.1])) == pytest.approx(reach)
+
+
+def test_elbow_from_hand_lies_along_the_hands_own_x_axis():
+    """The elbow's hand-frame offset is (l1, 0), so it never picks up a y component.
+
+    This is where elbow_from_hand and tip_from_hand deliberately differ: the pi roll
+    of the fingers-down pose flips the offset's y, and the elbow has none to flip.
+    At yaw = pi/2 the hand's +x axis is world +y, so the displacement is +l1 * yhat --
+    a sign flip would send it to -l1 * yhat and stay undetected by a length check.
+    """
+    tau = (0.3, 0.2, 0.7)
+    hand = np.array([0.45, -0.1])
+    for yaw, direction in [(0.0, (1.0, 0.0)), (np.pi / 2, (0.0, 1.0)),
+                           (-np.pi / 2, (0.0, -1.0)), (np.pi, (-1.0, 0.0))]:
+        elbow = se2.elbow_from_hand((hand[0], hand[1], yaw), tau)
+        assert np.allclose(elbow - hand, 0.3 * np.asarray(direction), atol=1e-12)
+
+
+def test_elbow_from_hand_ignores_l2_and_phi():
+    """l1 is the only design parameter the elbow reads."""
+    base = se2.elbow_from_hand((0.45, -0.1, 0.4), (0.3, 0.2, 0.7))
+    for tau in [(0.3, 0.1, -1.9), (0.3, 0.2, 0.0), (0.3, 0.15, 1.9)]:
+        assert np.allclose(se2.elbow_from_hand((0.45, -0.1, 0.4), tau), base)
+
+
+def test_a_straight_rod_puts_the_elbow_between_the_hand_and_the_tip():
+    """phi = 0 collapses the polyline to a segment of length l1 + l2."""
+    tau = (0.3, 0.2, 0.0)
+    hand_se2 = (0.45, -0.1, 0.4)
+    hand = np.array(hand_se2[:2])
+    elbow = se2.elbow_from_hand(hand_se2, tau)
+    tip = se2.tip_from_hand(hand_se2, tau)
+    assert np.linalg.norm(elbow - hand) == pytest.approx(0.3)
+    assert np.linalg.norm(tip - elbow) == pytest.approx(0.2)
+    assert np.linalg.norm(tip - hand) == pytest.approx(0.5)

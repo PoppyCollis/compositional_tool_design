@@ -54,11 +54,6 @@ Trajectory randomness (action noise, contact) is already marginalised inside `V^
 The single description of `x_t`, 24 dims. `P(p) = (p − c)/s` and `D(v) = v/s`, with
 `c` and `s` from `TaskConfig.SCENE_BOX`.
 
-> **Status.** This is the decided layout (`networks_and_design_gradient.md`, which
-> supersedes the 21-dim table this file used to carry). The code is still at
-> `initial_state.OBS_DIM = 21`; the 21 → 24 change is an open item in `plan.md`, and
-> every piece of it lands together because each one moves `OBS_DIM`.
-
 | slice | contents | τ-dependent |
 | --- | --- | --- |
 | `0:2` | `P(hand xy)` | no |

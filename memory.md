@@ -153,8 +153,30 @@ what will need a support surface (see plan.md).
     production caller; `normalise_point`/`normalise_delta` are the only maps.
 - **Relative features are `obj - tip` and `target - obj`, never `target - tip`.** They
   are the two reward terms; their sum points somewhere useful in neither sweeping nor
-  pushing. Degenerate direction worth knowing: the tip enters slice 7:9 as `+tip/s` and
-  11:13 as `-tip/s`, so any plain sum over the observation cancels the design out.
+  pushing. Degenerate direction worth knowing: the tip enters slice 9:11 as `+tip/s` and
+  13:15 as `-tip/s`, so any plain sum over the observation cancels the design out.
+- **The elbow is in the observation, and `t / HORIZON` with it: 24 dims, not 21.**
+  Two separate reasons that happened to land together because both move `OBS_DIM`.
+  - *The elbow, at 7:9.* The tip alone pins only `o(tau) = (l1 + l2 cos phi,
+    l2 sin phi)` — two numbers out of three — so `l1` was unrecoverable from `x_t` and
+    `dh/dtau` was rank 2. `se2.elbow_from_hand` gives `l1` from `hand -> elbow` and
+    `(l2, phi)` from `elbow -> tip`, making `tau -> x1` injective and every design
+    parameter a gradient component. That is what licenses `V(x)` with no `tau` input:
+    `V_psi(x) = V_psi(x, tau)` becomes an identity rather than an approximation.
+    **No sign flip on `y`, unlike `se2.tip_from_hand`** — the elbow's hand-frame
+    offset is `(l1, 0)` and the pi roll only touches `y`, which is zero here. Tested
+    at `yaw = +-pi/2`, where a flip would be invisible to a length check.
+  - *The phase, at 23:24.* `reach_env.step` runs a fixed horizon with
+    `terminated = False`, so return-to-go depends on steps remaining and `V(x)` was
+    fitting an average over `t`. `h` emits 0, which makes `V(x1)` exactly "expected
+    return of a full episode with this design". Bootstrapping on truncation is the
+    other correct fix — **pick one**; if the PPO stack bootstraps at truncation by
+    default, doing both double-counts.
+  - *What it costs.* Flatness along the design ridge is now a real test.
+    `(0.120, 0.180, 0)` and `(0.180, 0.120, 0)` share a tip exactly; before the elbow
+    they shared an observation and the network had no choice but to score them
+    equally, whereas now their elbows are 6 cm apart and nothing stops it learning a
+    slope from noise. Walk the ridge and plot `V` before trusting the chain.
 - **Reach success is tip-based, and the spec was wrong.** `task_encoding_g.md` gave
   `d(obj_T, p_target) < rho` for all three task types. The reaching object is pinned at
   the target and never moves, so that scores every episode a success -- including one
@@ -163,7 +185,7 @@ what will need a support surface (see plan.md).
 - **`ReachEnv` is a plain `gymnasium.Env`, not `RobotTaskEnv`.** panda-gym's
   `RobotTaskEnv` fails on three counts at once: it hardcodes a HER-style Dict
   observation (`observation`/`achieved_goal`/`desired_goal`) where this needs one flat
-  21-vector; it wants a `panda_gym.envs.core.Task` ABC, whose name collides with this
+  24-vector; it wants a `panda_gym.envs.core.Task` ABC, whose name collides with this
   repo's unrelated `task.Task` NamedTuple; and its `step` terminates on success, which
   `TaskConfig.HORIZON` forbids. Copying ~80 lines of `gym.Env` beat patching all three
   — the same call already made for `PyBulletRobot` over `Panda`.

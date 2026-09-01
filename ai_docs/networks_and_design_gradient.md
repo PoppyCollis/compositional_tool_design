@@ -194,16 +194,24 @@ that turns out to matter, rescale `l1, l2` to `[-1, 1]` over the design box and 
 
 ## 7. What this changes
 
-Code, still to do -- every item moves `OBS_DIM`, so they land together or not at all.
-Tracked in `plan.md`.
+Code, done -- every item moved `OBS_DIM`, so they landed together:
 
-- `se2`: add `elbow_from_hand`, plus its torch mirror in `initial_state`.
-- `panda_with_tool.get_obs`: emit the elbow. `ROBOT_DIM` 9 -> 11.
-- `initial_state`: `OBS_DIM` 21 -> 24, slice constants renumbered, `TAU_SLICES` gains
-  the elbow, `h` emits the elbow and a zero phase.
-- `reach_env`: append `t / HORIZON` to `_get_obs`; the sim-vs-analytic test covers both
-  new slices for free.
-- New module for the feature layer and the design-space encoding.
+- `se2.elbow_from_hand`, plus `initial_state.elbow_from_hand_torch`.
+- `panda_with_tool.get_obs` emits the elbow. `ROBOT_DIM` 9 -> 11.
+- `initial_state`: `OBS_DIM` 21 -> 24, slice constants renumbered, `PHASE` added,
+  `TAU_SLICES` gains the elbow, `h` emits the elbow and a zero phase.
+- `reach_env._get_obs` appends `t / HORIZON`; the sim-vs-analytic test covers both new
+  slices, and `test_initial_state` now asserts `dh/dtau` is rank 3 and that `tau`
+  round-trips out of `x_1` to 1e-12.
+
+Code, still to do:
+
+- New module for the feature layer (§6) and the design-space encoding. Deferred to the
+  PPO pass deliberately: it is read by both the RL stack and the designer, and neither
+  exists yet. The recovery arithmetic currently sits in
+  `tests/test_initial_state.test_tau_is_exactly_recoverable_from_x1` and should be
+  lifted from there rather than written twice.
+- Drop `tau` from both networks (§1) -- vacuous until there are networks.
 
 Docs, done:
 

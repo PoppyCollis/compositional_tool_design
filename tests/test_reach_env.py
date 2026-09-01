@@ -37,6 +37,9 @@ EXACT_SLICES = {
     "OBJ_XY": initial_state.OBJ_XY,
     "D_TARGET_OBJ": initial_state.D_TARGET_OBJ,
     "TASK_BLOCK": initial_state.TASK_BLOCK,
+    # Both sides are literally 0.0: reset zeroes _elapsed before building the
+    # observation, and h emits the start of an episode by construction.
+    "PHASE": initial_state.PHASE,
 }
 EXACT_TOL = 1e-6
 
@@ -55,9 +58,14 @@ EXACT_TOL = 1e-6
 # displacement and a tau whose l1 is 5 mm wrong are both caught; 2 mm of either is
 # not. The floor is the arm's residual, not a slack tolerance -- tightening it below
 # ~3e-3 makes the test flap on IK noise instead of catching anything more.
+#
+# ELBOW_XY rides on the same residual as TIP_XY and sits on a shorter lever arm
+# (l1 <= 0.2 m against the tip's full R), so the yaw residual reaches it less; the
+# hand's position error dominates it just as it does the tip's.
 POSE_SLICES = {
     "HAND_XY": initial_state.HAND_XY,
     "HAND_YAW": initial_state.HAND_YAW,
+    "ELBOW_XY": initial_state.ELBOW_XY,
     "TIP_XY": initial_state.TIP_XY,
     "D_OBJ_TIP": initial_state.D_OBJ_TIP,
 }
@@ -147,12 +155,19 @@ def test_episode_runs_to_horizon_without_terminating(env):
     obs, _ = env.reset(seed=0)
     assert env.observation_space.contains(obs)
 
+    assert obs[initial_state.PHASE] == pytest.approx(0.0)
+
     for step in range(1, TaskConfig.HORIZON + 1):
         obs, reward, terminated, truncated, _ = env.step(env.action_space.sample())
         assert terminated is False
         assert truncated == (step == TaskConfig.HORIZON)
         assert env.observation_space.contains(obs), f"observation left its box at step {step}"
         assert reward <= 0.0
+        # The phase is what makes a return-to-go from this state well defined; it has
+        # to advance with the step count, not sit at whatever reset left it.
+        assert obs[initial_state.PHASE] == pytest.approx(
+            step / TaskConfig.HORIZON, abs=1e-6
+        )
 
 
 def test_success_is_reported_in_info_but_never_terminates(env):

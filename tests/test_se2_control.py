@@ -127,7 +127,7 @@ def test_action_space_is_three_dimensional(robot):
 def test_obs_is_finite_and_the_expected_width(robot):
     robot.reset()
     obs = robot.get_obs()
-    assert obs.shape == (9,)
+    assert obs.shape == (11,)
     assert np.all(np.isfinite(obs))
 
 

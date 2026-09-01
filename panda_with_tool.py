@@ -257,22 +257,25 @@ class PandaWithTool(PyBulletRobot):
         return se2.tilt_from_matrix(self.get_hand_rotation())
 
     def get_obs(self):
-        """Observation of the arm: slices 0:9 of the full state vector.
+        """Observation of the arm: slices 0:11 of the full state vector.
 
         Returns:
-            np.ndarray: 9 values --
+            np.ndarray: 11 values --
                 hand position, scene-normalised (2),
                 hand yaw as (cos, sin) so it is continuous across +-pi (2),
                 hand planar velocity and yaw rate, scaled (3),
+                elbow position, scene-normalised (2),
                 tool-tip position, scene-normalised (2).
 
-        The object and task blocks (slices 9:21) are appended by the env layer; the
-        full layout is documented in initial_state.py, which reproduces this vector
-        analytically. The two stay in step by calling the same Box.normalise_point on
-        the same box, not by an assertion -- keep it that way.
+        The object, task and phase blocks (slices 11:24) are appended by the env
+        layer; the full layout is documented in initial_state.py, which reproduces
+        this vector analytically. The two stay in step by calling the same
+        Box.normalise_point on the same box, not by an assertion -- keep it that way.
 
-        The tip is computed in closed form from the hand pose and tau rather than
-        queried by FK, which makes the design's only effect on this MDP explicit.
+        Both tool points are computed in closed form from the hand pose and tau rather
+        than queried by FK, which makes the design's only effect on this MDP explicit.
+        The elbow is here so that tau is exactly recoverable from the observation:
+        the tip alone leaves l1 unrecoverable. See se2.elbow_from_hand.
         """
         x, y, yaw = self.get_hand_se2()
         # Centre-of-mass velocity, unlike the pose above. It differs from the link
@@ -281,12 +284,14 @@ class PandaWithTool(PyBulletRobot):
         # this term is a conditioning signal for the policy, not a control input.
         velocity = self.get_link_velocity(self.hand_link)
         yaw_rate = self.sim.get_link_angular_velocity(self.body_name, self.hand_link)[2]
+        elbow = se2.elbow_from_hand((x, y, yaw), self.tau)
         tip = se2.tip_from_hand((x, y, yaw), self.tau)
         return np.concatenate([
             self.scene.normalise_point((x, y)),
             [np.cos(yaw), np.sin(yaw)],
             np.asarray(velocity)[:2] / SE2Config.VEL_SCALE,
             [yaw_rate / SE2Config.VEL_SCALE],
+            self.scene.normalise_point(elbow),
             self.scene.normalise_point(tip),
         ])
 

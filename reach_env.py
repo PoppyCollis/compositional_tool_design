@@ -15,7 +15,7 @@ for three independent reasons:
 
 - ``RobotTaskEnv`` hardcodes a HER-style Dict observation space
   (``observation``/``achieved_goal``/``desired_goal``); the observation here is one
-  flat 21-vector, which is what ``h`` returns.
+  flat 24-vector, which is what ``h`` returns.
 - It requires a ``panda_gym.envs.core.Task`` ABC. This repo's ``task.Task`` is an
   unrelated NamedTuple with the same name -- importing both invites a silent clash.
 - Its ``step`` terminates on success, which ``TaskConfig.HORIZON``'s comment forbids:
@@ -182,7 +182,14 @@ class ReachEnv(gymnasium.Env):
         return np.asarray(self.sim.get_base_position("object"), dtype=float)[:2]
 
     def _get_obs(self):
-        """The 21-dim observation, in the layout documented in ``initial_state.py``.
+        """The 24-dim observation, in the layout documented in ``initial_state.py``.
+
+        The trailing ``t / HORIZON`` is what makes a fixed-horizon return well
+        defined: ``step`` never terminates, so return-to-go from a state depends on
+        how many steps remain, and without a time index ``V`` would fit an average
+        over ``t``. ``reset`` zeroes ``_elapsed`` before calling this, so the reset
+        observation's phase is exactly the 0 that ``initial_state.h`` emits; ``step``
+        increments first, so the final step of an episode reads 1.0.
 
         Returns:
             np.ndarray: Shape ``(OBS_DIM,)``, float32.
@@ -191,11 +198,12 @@ class ReachEnv(gymnasium.Env):
         tip = self._tip_xy()
         target = np.asarray(self._task.target, dtype=float)[:2]
         return np.concatenate([
-            self.robot.get_obs(),                        # 0:9
-            self.scene.normalise_point(obj),             # 9:11
-            self.scene.normalise_delta(obj - tip),       # 11:13
-            self.scene.normalise_delta(target - obj),    # 13:15
-            task_mod.encode(self._task),                 # 15:21
+            self.robot.get_obs(),                        # 0:11
+            self.scene.normalise_point(obj),             # 11:13
+            self.scene.normalise_delta(obj - tip),       # 13:15
+            self.scene.normalise_delta(target - obj),    # 15:17
+            task_mod.encode(self._task),                 # 17:23
+            [self._elapsed / TaskConfig.HORIZON],        # 23:24
         ]).astype(np.float32)
 
     def _info(self, tip, obj):
