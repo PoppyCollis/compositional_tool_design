@@ -18,17 +18,6 @@ def test_box_clip_pulls_outside_points_to_the_edge():
     assert np.allclose(BOX.clip((5.0, -5.0)), (BOX.x_max, BOX.y_min))
 
 
-def test_box_normalise_maps_corners_to_unit_square():
-    assert np.allclose(BOX.normalise((BOX.x_min, BOX.y_min)), (-1.0, -1.0))
-    assert np.allclose(BOX.normalise((BOX.x_max, BOX.y_max)), (1.0, 1.0))
-    assert np.allclose(BOX.normalise(BOX.centre), (0.0, 0.0))
-
-
-def test_box_normalise_leaves_outside_points_outside():
-    """The tool tip routinely reaches past the hand's bounds; that is information."""
-    assert np.all(np.abs(BOX.normalise((BOX.x_max + 0.3, 0.0))) .max() > 1.0)
-
-
 # -- the isotropic observation map --------------------------------------------
 
 

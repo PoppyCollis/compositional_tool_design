@@ -157,25 +157,6 @@ class Box(NamedTuple):
         """
         return np.asarray(v, dtype=float)[:2] / self.scale
 
-    def normalise(self, xy):
-        """Map a point to ``[-1, 1]`` **per axis**, with the box centre at the origin.
-
-        Superseded by ``normalise_point`` for observations and kept only because the
-        per-axis form is occasionally the right one for a box that is not the scene
-        box. It has no production caller; delete it if none appears.
-
-        Points outside the box map outside ``[-1, 1]``, which is deliberate -- the
-        tool tip routinely reaches past the hand's own bounds, and that is information
-        rather than an error.
-
-        Args:
-            xy: Point as ``(x, y)``.
-
-        Returns:
-            np.ndarray: Normalised coordinates as ``(nx, ny)``.
-        """
-        return (np.asarray(xy, dtype=float)[:2] - self.centre) / self.half_extents
-
     def sample(self, np_random):
         """Draw a point uniformly from the box.
 

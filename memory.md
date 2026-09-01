@@ -148,7 +148,8 @@ the deferred sim-vs-analytic agreement test. Sweep and push regions are still op
     aspect ratio alone. Price: the short axis normalises to +-0.55, not +-1.
   - *It must never move.* `h` reapplies this exact map at design time against a frozen
     `V`. A running normaliser in the RL stack would make it drift and silently
-    invalidate that. `Box.normalise` (per-axis) is kept but has no production caller.
+    invalidate that. The old per-axis `Box.normalise` was deleted once it had no
+    production caller; `normalise_point`/`normalise_delta` are the only maps.
 - **Relative features are `obj - tip` and `target - obj`, never `target - tip`.** They
   are the two reward terms; their sum points somewhere useful in neither sweeping nor
   pushing. Degenerate direction worth knowing: the tip enters slice 7:9 as `+tip/s` and
