@@ -1,9 +1,10 @@
 # Memory
 
 ## Current focus
-SE(2) control layer is in, and the **reach**-task object placement map on top of it
-(`task_space.py`, `reach_sweep.py`). Next: pick the `s_start` constant off those maps,
-then the gymnasium env + reward. Sweep and push regions are still open.
+SE(2) control, the reach placement maps, and now the task generative model `p(g)`
+(`task.py`) and the initial-state map `h` (`initial_state.py`). Next: the gymnasium
+env (ghost-sphere reach target) whose reset is the simulator side of `h`, and with it
+the deferred sim-vs-analytic agreement test. Sweep and push regions are still open.
 
 ## Key decisions
 
@@ -116,9 +117,57 @@ then the gymnasium env + reward. Sweep and push regions are still open.
   impossible; the band between is where the §7 diagnostic in `task_encoding_g.md` can
   bite. Measured at r_obj=0.03: 1.328 m2 reachable by some tool, of which 1.089 m2 (82%)
   discriminates and 0.902 m2 of that is also out of the bare arm's reach.
-- **`s_start` cannot depend on tau.** It is a field of `g`, so a tau-conditioned start
-  region would make `g` depend on the design and break the factorisation. Hence the
-  regions are always aggregated across the prior, never taken per-design.
+- **`g` is the target spec only; `x_t` is everything observable.** Deviates from the
+  first draft of `ai_docs/task_encoding_g.md`, which put `s_start` (the object start
+  *region*) in `g` so `h(tau, g)` would be well-defined. Instead `x_t` re-emits the
+  object's *current* pose every step, so the start position lands in `x1` for free and
+  needs no second home. What replaced `s_start` is `task.object_start`: a distribution
+  keyed by `task_id`, drawn at reset inside `h`. `g = (task_id, p_target, r_obj, rho,
+  w_reach, w_trans)`. The docs were rewritten to match rather than left contradicting
+  the code.
+- **`p_target ~ U(SCENE_BOX)`, unreachable targets included on purpose.** No rejection
+  sampling, which is what the previous plan called for. Over the box (x[0, 1.10],
+  y[-1, 1]) that is 39.7% reachable by no prior design, 49.2% discriminating, 11.1%
+  reachable by all. The value function should learn that some targets are hopeless
+  whatever the tool rather than extrapolate to them at design time. Cost: an aggregate
+  success rate over the box mostly measures the mixing ratio, so **evaluation has to
+  stratify by `task_space.coverage` band**, and the §7 diagnostic must draw its three
+  `g`s from the middle band.
+- **One box, one scalar, frozen: `TaskConfig.SCENE_BOX`.** Every planar position in the
+  observation -- hand, tip, object, target -- goes through
+  `Box.normalise_point(p) = (p - c)/s`, and the relative features through
+  `normalise_delta(v) = v/s`. Three separate reasons, all about the design gradient:
+  - *Not `SE2Config.WORKSPACE`.* The tool exists to put the tip outside the arm's
+    reach, so normalising on the hand's own rectangle pushes long tools past +-1 --
+    exactly the designs the search evaluates land in the network's extrapolation
+    region, and `dV/dx1` is half of `grad_tau E`. Same for the object, which in
+    sweeping and pushing crosses the reach boundary in both directions.
+  - *One scalar divisor, not one per axis.* `dh/dtau` is in metres; per-axis scaling
+    would make one normalised unit 0.55 m in x and 1.0 m in y, so two designs with
+    physically equal tip displacements would get unequal gradients from the box's
+    aspect ratio alone. Price: the short axis normalises to +-0.55, not +-1.
+  - *It must never move.* `h` reapplies this exact map at design time against a frozen
+    `V`. A running normaliser in the RL stack would make it drift and silently
+    invalidate that. `Box.normalise` (per-axis) is kept but has no production caller.
+- **Relative features are `obj - tip` and `target - obj`, never `target - tip`.** They
+  are the two reward terms; their sum points somewhere useful in neither sweeping nor
+  pushing. Degenerate direction worth knowing: the tip enters slice 7:9 as `+tip/s` and
+  11:13 as `-tip/s`, so any plain sum over the observation cancels the design out.
+- **Reach success is tip-based, and the spec was wrong.** `task_encoding_g.md` gave
+  `d(obj_T, p_target) < rho` for all three task types. The reaching object is pinned at
+  the target and never moves, so that scores every episode a success -- including one
+  where the tip never left the far side of the table. `task.success` branches on the
+  task type; a test pins it.
+- **`h` is torch-only, with no numpy twin.** Two implementations of one formula is the
+  drift this codebase has already paid for. `tip_offset_torch` / `tip_from_hand_torch`
+  are pinned to `se2.tip_offset` / `se2.tip_from_hand` by test instead. They accept a
+  batched tau, unlike `tool_geometry` -- that rule exists because geometry feeds URDF
+  generation one body at a time, and `h` touches no URDF.
+- **`s_start` cannot depend on tau.** Superseded in form -- there is no `s_start` field
+  any more -- but the reason survives and now applies to `task.object_start`: a
+  tau-conditioned start distribution would make `g` depend on the design and break the
+  `p(tau | g, O=1)` factorisation. Hence the regions are always aggregated across the
+  prior, never taken per-design.
 - **Two implementations of the same set, deliberately.** `tip_reachable` is exact and
   per-point (for env-time queries); `reach_mask` rasterises the Minkowski sum by integer
   cell shifts and is ~200-460x faster (for maps and the 2000-design coverage pass, 52 min

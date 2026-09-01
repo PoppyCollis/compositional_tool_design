@@ -159,9 +159,10 @@ class TaskConfig:
     """Object and target geometry for the task encoding (ai_docs/task_encoding_g.md).
 
     SE2Config.WORKSPACE says where the *hand* may go. These say where an *object*
-    may sit, which is a different question and the one `s_start` and `p_target` are
-    drawn from. The regions themselves are computed by task_space.py and mapped by
-    reach_sweep.py; only the scalars live here.
+    may sit, which is a different question and the one `p_target` is drawn from. The
+    regions themselves are computed by task_space.py and mapped by reach_sweep.py;
+    only the scalars live here, along with SCENE_BOX, the frozen normalisation map
+    shared by the observation and by initial_state.h.
     """
 
     # Max object radius, as a plan-view disk. The maps are all computed at this
@@ -185,6 +186,45 @@ class TaskConfig:
     # the counterfactual a tool has to beat. A target inside it is solvable with no
     # tool at all, so it carries no design signal whatever the policy does.
     GRIPPER_RADIUS = 0.045
+
+    # The one box every planar position in the observation is normalised against --
+    # hand, tool tip, object and target alike -- and the support of p_target.
+    #
+    # Deliberately NOT SE2Config.WORKSPACE. The tool's whole purpose is to put the tip
+    # outside the arm's reach, so normalising on the hand's own rectangle would push
+    # long tools past +-1: exactly the designs the search exists to evaluate would land
+    # in the network's extrapolation region, and (dV/dx1) is half the design gradient.
+    # The same argument applies to the object, which in sweeping and pushing crosses
+    # the reach boundary in both directions, so no sub-box contains its trajectory.
+    #
+    # Extents: measured 2026-09-01, the union of tool-reachable object centres over
+    # 2000 ToolPrior designs at R_OBJ is x[0.150, 1.035], y[-0.800, 0.795]. This box
+    # contains it with padding. In the robot base frame, like SE2Config.WORKSPACE;
+    # PandaWithTool translates it by the base position.
+    #
+    # Uniform target sampling over it is 39.7% unreachable by every prior design,
+    # 49.2% in the discriminating band (0 < coverage < 1) and 11.1% reachable by all
+    # (measured 2026-09-01, 5 mm grid, 2000 prior designs at R_OBJ).
+    # The unreachable third is intentional -- see ai_docs/task_encoding_g.md -- but it
+    # means evaluation has to stratify by band or it mostly measures the mixing ratio.
+    SCENE_BOX = se2.Box(x_min=0.0, x_max=1.10, y_min=-1.0, y_max=1.0)
+
+    # The support of p_target. The same rectangle as SCENE_BOX, named separately
+    # because they are the same for two different reasons and only one is likely to
+    # move: SCENE_BOX must contain everything the network ever sees, TARGET_BOX is a
+    # choice about which tasks to pose.
+    TARGET_BOX = SCENE_BOX
+
+    # Success tolerance rho_target. A field of g rather than an eval constant, so the
+    # objective and the metric cannot drift apart (ai_docs/task_encoding_g.md).
+    RHO_TARGET = 0.03
+
+    # Fixed episode length; no early termination on success. Terminating early would
+    # truncate the accumulating negative reward, making V jump discontinuously at the
+    # rho boundary and putting success and failure returns on different scales. V is
+    # read as an energy over designs, so that comparability matters more here than the
+    # wall-clock an early exit would save.
+    HORIZON = 100
 
 
 class DesignPriorConfig:

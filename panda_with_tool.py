@@ -16,7 +16,7 @@ from panda_gym.envs.core import PyBulletRobot
 
 import panda_with_tool_urdf
 import se2
-from config import ArmConfig, SE2Config
+from config import ArmConfig, SE2Config, TaskConfig
 from utils.helpers import get_link_index_by_name
 
 JOINT_INDICES = np.array([0, 1, 2, 3, 4, 5, 6])
@@ -56,6 +56,11 @@ class PandaWithTool(PyBulletRobot):
         # elsewhere carries the same rectangle, translated.
         self.workspace = SE2Config.WORKSPACE.translate(base_position[:2])
         self.reset_workspace = self.workspace.shrink(SE2Config.RESET_MARGIN)
+        # Where the hand may go and what the observation is normalised against are
+        # two different boxes. The tool exists to put the tip *outside* the first, so
+        # normalising on it would send exactly the designs under evaluation into the
+        # network's extrapolation region. See TaskConfig.SCENE_BOX.
+        self.scene = TaskConfig.SCENE_BOX.translate(base_position[:2])
 
         urdf_path = panda_with_tool_urdf.write_panda_with_tool_urdf(tau)
         action_space = spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
@@ -252,19 +257,22 @@ class PandaWithTool(PyBulletRobot):
         return se2.tilt_from_matrix(self.get_hand_rotation())
 
     def get_obs(self):
-        """Observation of the arm, everything normalised against the workspace.
+        """Observation of the arm: slices 0:9 of the full state vector.
 
         Returns:
             np.ndarray: 9 values --
-                hand position normalised to [-1, 1] per axis (2),
+                hand position, scene-normalised (2),
                 hand yaw as (cos, sin) so it is continuous across +-pi (2),
                 hand planar velocity and yaw rate, scaled (3),
-                tool-tip position normalised on the same box (2).
+                tool-tip position, scene-normalised (2).
+
+        The object and task blocks (slices 9:21) are appended by the env layer; the
+        full layout is documented in initial_state.py, which reproduces this vector
+        analytically. The two stay in step by calling the same Box.normalise_point on
+        the same box, not by an assertion -- keep it that way.
 
         The tip is computed in closed form from the hand pose and tau rather than
         queried by FK, which makes the design's only effect on this MDP explicit.
-        It normalises outside [-1, 1] whenever the tool reaches past the hand's own
-        bounds; that is information, not an error.
         """
         x, y, yaw = self.get_hand_se2()
         # Centre-of-mass velocity, unlike the pose above. It differs from the link
@@ -275,11 +283,11 @@ class PandaWithTool(PyBulletRobot):
         yaw_rate = self.sim.get_link_angular_velocity(self.body_name, self.hand_link)[2]
         tip = se2.tip_from_hand((x, y, yaw), self.tau)
         return np.concatenate([
-            self.workspace.normalise((x, y)),
+            self.scene.normalise_point((x, y)),
             [np.cos(yaw), np.sin(yaw)],
             np.asarray(velocity)[:2] / SE2Config.VEL_SCALE,
             [yaw_rate / SE2Config.VEL_SCALE],
-            self.workspace.normalise(tip),
+            self.scene.normalise_point(tip),
         ])
 
     def get_ee_position(self):

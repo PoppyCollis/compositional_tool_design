@@ -107,13 +107,66 @@ class Box(NamedTuple):
         dx, dy = float(xy[0]), float(xy[1])
         return Box(self.x_min + dx, self.x_max + dx, self.y_min + dy, self.y_max + dy)
 
-    def normalise(self, xy):
-        """Map a point to ``[-1, 1]`` per axis, with the box centre at the origin.
+    @property
+    def scale(self):
+        """The single scalar divisor ``s`` used by the isotropic observation map.
 
-        Gives the policy a consistent input scale wherever the box happens to sit in
-        the robot's frame. Points outside the box map outside ``[-1, 1]``, which is
-        deliberate -- the tool tip routinely reaches past the hand's own bounds, and
-        that is information rather than an error.
+        The half-extent of the box's *longest* axis, so one normalised unit means the
+        same number of metres in every direction. Dividing per axis instead would make
+        the map anisotropic, and the design gradient is read through it: the second
+        term of ``grad_tau E`` is ``(dV/dx1) . (dh/dtau)`` and ``dh/dtau`` is in metres,
+        so per-axis scaling would give two designs producing physically equal tip
+        displacements unequal gradient magnitudes, purely from the box's aspect ratio.
+        """
+        return float(np.max(self.half_extents))
+
+    def normalise_point(self, xy):
+        """Map an absolute position by ``(p - centre) / scale``.
+
+        The observation map, applied identically to the hand, the tool tip, the object
+        and the target (see ``config.TaskConfig.SCENE_BOX``). Centring is per axis;
+        only the divisor is shared, so each axis is symmetric about zero but the
+        shorter one does not fill ``[-1, 1]``. That is the cost of isotropy.
+
+        This map is a frozen constant, not a fitted statistic: ``initial_state.h``
+        reapplies it at design time against a value function trained months earlier,
+        so anything that made it drift -- a running normaliser in the RL stack, say --
+        would silently invalidate that reapplication.
+
+        Args:
+            xy: Point as ``(x, y)``.
+
+        Returns:
+            np.ndarray: Normalised coordinates as ``(nx, ny)``.
+        """
+        return (np.asarray(xy, dtype=float)[:2] - self.centre) / self.scale
+
+    def normalise_delta(self, v):
+        """Map a displacement by ``v / scale``, with no centring.
+
+        The counterpart to ``normalise_point`` for the relative features
+        ``obj - tip`` and ``target - obj``. Differences are already origin-free, so
+        subtracting the centre would be wrong; dividing by the same ``scale`` keeps
+        every length in the observation on one consistent metric.
+
+        Args:
+            v: Displacement as ``(dx, dy)``.
+
+        Returns:
+            np.ndarray: Normalised displacement as ``(nx, ny)``.
+        """
+        return np.asarray(v, dtype=float)[:2] / self.scale
+
+    def normalise(self, xy):
+        """Map a point to ``[-1, 1]`` **per axis**, with the box centre at the origin.
+
+        Superseded by ``normalise_point`` for observations and kept only because the
+        per-axis form is occasionally the right one for a box that is not the scene
+        box. It has no production caller; delete it if none appears.
+
+        Points outside the box map outside ``[-1, 1]``, which is deliberate -- the
+        tool tip routinely reaches past the hand's own bounds, and that is information
+        rather than an error.
 
         Args:
             xy: Point as ``(x, y)``.

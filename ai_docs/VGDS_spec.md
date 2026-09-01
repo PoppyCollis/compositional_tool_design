@@ -45,11 +45,16 @@ still targets the correct distribution restricted to the design space.
 ## 2. State
 
 ```
-x = ( arm state , tool end-effector state , g )
+x = ( arm state , tool end-effector state , object state , g )
 ```
 
 `g` lives in the state, so **do not condition the policy on `g` separately** — `π(a | x, τ)`
 already sees it. It reaches the design objective through `x₁`.
+
+The authoritative, slice-by-slice description of `x` is the observation layout table in
+`h_initial_state_map.md`; `initial_state.py` is the implementation. `x_t` is the full
+currently-observable state and re-emits the object's pose every step, which is why `g`
+in `task_encoding_g.md` carries only the target specification and no start region.
 
 The tool end-effector state is forward kinematics of the arm *and* the tool geometry, so it
 is a function of `τ`.

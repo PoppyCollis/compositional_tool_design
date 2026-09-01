@@ -29,6 +29,55 @@ def test_box_normalise_leaves_outside_points_outside():
     assert np.all(np.abs(BOX.normalise((BOX.x_max + 0.3, 0.0))) .max() > 1.0)
 
 
+# -- the isotropic observation map --------------------------------------------
+
+
+def test_box_scale_is_the_longest_half_extent():
+    assert BOX.scale == pytest.approx(max(BOX.half_extents))
+
+
+def test_normalise_point_is_isotropic():
+    """One normalised unit means the same metres in every direction.
+
+    The property the whole scalar-divisor decision exists for: dh/dtau is in metres,
+    so a per-axis divisor would give two designs producing physically equal tip
+    displacements unequal design gradients, purely from the box's aspect ratio.
+    """
+    step = 0.07
+    c = BOX.centre
+    dx = BOX.normalise_point(c + np.array([step, 0.0])) - BOX.normalise_point(c)
+    dy = BOX.normalise_point(c + np.array([0.0, step])) - BOX.normalise_point(c)
+    assert np.linalg.norm(dx) == pytest.approx(np.linalg.norm(dy))
+
+
+def test_normalise_point_centres_and_bounds_the_box():
+    assert np.allclose(BOX.normalise_point(BOX.centre), (0.0, 0.0))
+    for corner in [(BOX.x_min, BOX.y_min), (BOX.x_max, BOX.y_max)]:
+        assert np.max(np.abs(BOX.normalise_point(corner))) <= 1.0 + 1e-12
+
+
+def test_normalise_point_is_symmetric_but_need_not_fill_the_unit_square():
+    """The short axis stops short of +-1. That is the cost of isotropy, not a bug."""
+    lo = BOX.normalise_point((BOX.x_min, BOX.y_min))
+    hi = BOX.normalise_point((BOX.x_max, BOX.y_max))
+    assert np.allclose(lo, -hi)
+    short = int(np.argmin(BOX.half_extents))
+    assert abs(hi[short]) < 1.0
+
+
+def test_normalise_delta_does_not_centre():
+    assert np.allclose(BOX.normalise_delta((0.0, 0.0)), (0.0, 0.0))
+    assert np.allclose(BOX.normalise_delta((BOX.scale, 0.0)), (1.0, 0.0))
+
+
+def test_normalise_delta_matches_a_difference_of_normalised_points():
+    a, b = np.array([0.2, 0.1]), np.array([0.45, -0.15])
+    assert np.allclose(
+        BOX.normalise_delta(b - a),
+        BOX.normalise_point(b) - BOX.normalise_point(a),
+    )
+
+
 def test_box_shrink_insets_every_side():
     small = BOX.shrink(0.05)
     assert small.x_min == pytest.approx(BOX.x_min + 0.05)
