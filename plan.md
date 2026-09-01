@@ -1,73 +1,23 @@
 # Plan
 
-## Done
-
-- [x] Audit of the Sonnet phi-reparameterisation pass (see memory.md).
-- [x] `_unpack` rejects batched/malformed tau instead of silently returning row 0.
-- [x] `_finger_span` calls `ensure_assets()` — fresh clone no longer crashes.
-- [x] Gripper constants hoisted into `config.GripperConfig`; phi-bound derivation
-  corrected (the "~9 cm clearance" claim was wrong; it is 3.3 cm).
-- [x] `interior_angle(phi) = pi - |phi|` added and covered by tests.
-- [x] phi-bound test derives its own critical angle instead of hardcoding 2.2.
-- [x] File caching re-enabled (220 ms -> 44 ms per load).
-- [x] Generated URDFs cleaned up at exit.
-- [x] `config.DEVICE` wired into `ToolPrior`; `tests/conftest.py` added.
-- [x] 28 tests pass under both `pytest` and `python -m pytest`.
-- [x] `spawn_demo_step3.py` resets the arm to `config.ArmConfig.NEUTRAL_JOINT_VALUES`
-  (panda-gym's ready pose) after each `loadURDF`, instead of sitting at the URDF's
-  all-zeros default (arm straight up). Single source of truth shared with
-  `PandaWithTool.reset`.
-- [x] Tool mount reoriented: `hand_to_tool` weld now pitches 90° so the tool
-  extends outward, perpendicular to the fingers, instead of in line with
-  them. See `[[memory.md]]` "Tool mount orientation". Azimuth intentionally
-  left to the arm's own wrist joint rather than added as a new parameter.
-- [x] Tool mount also rolled 90° about its own long axis (before the pitch),
-  so the elbow's bend plane (phi) is spun 90° relative to the fingers
-  while the tool still points outward the same way. `GripperConfig.
-      TOOL_MOUNT_ROLL`, composed with the pitch via `tool_urdf._compose_mount_rpy`.
-  See `[[memory.md]]`.
-- [x] **SE(2) control.** Action is now `(dx, dy, dyaw)` of the hand, 3-DoF instead
-  of 7, with height/roll/pitch pinned so the tool is always low and parallel to
-  the ground. New `se2.py` (pure math), `SE2Config`, `workspace_sweep.py`
-  (offline calibration), `se2_demo.py`, and 108 new tests. See `[[memory.md]]`
-  for the design decisions and the four bugs found on the way: link-frame vs
-  centre-of-mass readback, IK ignoring joint limits, measured-relative
-  integration compounding solver residual into a 25 cm drift, and untrackable
-  step sizes tilting the tool mid-motion.
-- [x] **Reach-task object placement map.** New `task_space.py` (pure geometry: reach
-  regions, coverage over the design prior, mask helpers moved out of
-  `workspace_sweep.py`), `se2.tip_polar`, `config.TaskConfig`, `reach_sweep.py`
-  (tables + candidate boxes + `--verify` against PyBullet FK + `--measure-gripper`),
-  `plot_reach_space.py`, and 87 new tests. See `[[memory.md]]` for the two geometric
-  facts it surfaced: alpha rotates the reachable half-plane independently of reach,
-  and long tools have a near-target blind zone because the tip is on a circle rather
-  than in a disk.
-- [x] **Task generative model `p(g)` and initial-state map `h`.** New `task.py`
-  (`TaskType`, `Task`, `sample_task`, `object_start`, `encode`, `reward`, `success`)
-  and `initial_state.py` (`Xi`, `sample_xi`, the torch tip kinematics, `h`), plus
-  `se2.Box.scale` / `normalise_point` / `normalise_delta`, `TaskConfig.SCENE_BOX` /
-  `TARGET_BOX` / `RHO_TARGET` / `HORIZON`, and 40 new tests. `PandaWithTool.get_obs`
-  now normalises on `SCENE_BOX`, not the hand workspace. The `s_start` item below was
-  resolved *differently* than planned — there is no `s_start` and no rejection
-  sampling; `p_target` is uniform over the whole box, unreachable targets included.
-  `ai_docs/task_encoding_g.md` and `h_initial_state_map.md` were rewritten to match.
-  See `[[memory.md]]` for the `g`/`x` split, the one-box-one-scalar normalisation
-  argument, and the reach-success bug in the original spec.
-
 ## Next
 
-- [ ] **Wrap `PandaWithTool` in a gymnasium env with the reach task.** The simulator
-  side of `h`, and the piece this pass deliberately deferred. Ghost sphere for the
-  target (`sim.create_sphere(..., ghost=True)`) — a real body would be knocked away by
-  any tool that reached it. Observation is `PandaWithTool.get_obs()` (slices 0:9) plus
-  the object and task blocks; layout in `initial_state.py`. Reward and success come
-  from `task.reward` / `task.success`. Fixed `TaskConfig.HORIZON`, **no early
-  termination**: truncating the accumulating negative reward makes `V` jump at the
-  `rho` boundary, and `V` is read as an energy across designs.
-  - Add the assertion this pass could not: reset the env to a known `xi`, and check
-    `env.reset()` equals `initial_state.h(tau, g, xi)` elementwise. Right now the two
-    agree only because both call `Box.normalise_point` on the same box.
-  - Assert `initial_state.ROBOT_DIM == len(robot.get_obs())` while a sim is up.
+- [ ] **Add a support surface before sweeping or pushing.** `sim.create_plane` and
+  `sim.create_table` are real collision bodies, not scenery — both wrap
+  `create_box(ghost=False, mass=0.0)`, and `create_table` takes friction kwargs
+  precisely for a dragged object. Gravity is already on, so a massive object needs
+  support and sliding friction is most of what those tasks are. Deliberately absent
+  now: reach is entirely kinematic (the object is a ghost, the sweeps screen on IK
+  pose), so a static body the arm never touches changes nothing, while a naively
+  sized table intersects the Panda's own base link — the base is at the origin and
+  panda-gym's table top is at z=0 centred on `x_offset`. When it lands:
+  - One `create_table`, friction set explicitly on both it and the object.
+  - The object must be a box or short cylinder, **not** a sphere: PyBullet's default
+    rolling friction is 0, so a sphere rolls forever instead of sliding.
+  - First test: run `se2_demo.py`'s trajectory with the table present and assert
+    zero tool-table contacts. The tool spans z in [0.01, 0.03] against measured
+    transients of 2.2-3 mm, so the 1 cm clearance is real but has never been checked
+    against an actual surface. Revisit with the self-collision item below.
 - [ ] **PPO observation normalisation must be off, or verifiably frozen.** If the
   implementation wraps envs in `VecNormalize` or equivalent by default, the running
   mean/var makes `x -> x_tilde` a moving map. `initial_state.h` reapplies that exact

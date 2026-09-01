@@ -1,10 +1,11 @@
 # Memory
 
 ## Current focus
-SE(2) control, the reach placement maps, and now the task generative model `p(g)`
-(`task.py`) and the initial-state map `h` (`initial_state.py`). Next: the gymnasium
-env (ghost-sphere reach target) whose reset is the simulator side of `h`, and with it
-the deferred sim-vs-analytic agreement test. Sweep and push regions are still open.
+SE(2) control, the reach placement maps, the task generative model `p(g)` (`task.py`),
+the initial-state map `h` (`initial_state.py`), and now the gymnasium env
+(`reach_env.py`) whose reset is the simulator side of `h` — the sim-vs-analytic
+agreement test is closed. Next: PPO. Sweep and push regions are still open, and are
+what will need a support surface (see plan.md).
 
 ## Key decisions
 
@@ -159,6 +160,44 @@ the deferred sim-vs-analytic agreement test. Sweep and push regions are still op
   the target and never moves, so that scores every episode a success -- including one
   where the tip never left the far side of the table. `task.success` branches on the
   task type; a test pins it.
+- **`ReachEnv` is a plain `gymnasium.Env`, not `RobotTaskEnv`.** panda-gym's
+  `RobotTaskEnv` fails on three counts at once: it hardcodes a HER-style Dict
+  observation (`observation`/`achieved_goal`/`desired_goal`) where this needs one flat
+  21-vector; it wants a `panda_gym.envs.core.Task` ABC, whose name collides with this
+  repo's unrelated `task.Task` NamedTuple; and its `step` terminates on success, which
+  `TaskConfig.HORIZON` forbids. Copying ~80 lines of `gym.Env` beat patching all three
+  — the same call already made for `PyBulletRobot` over `Panda`.
+- **The env owns its sim and one fixed `tau`.** One `PyBullet` client per env, built in
+  `__init__`, so `SubprocVecEnv` needs no changes here. `tau` never changes for the
+  env's life: the URDF is written and loaded once, and design diversity for PPO comes
+  from N parallel envs each holding one design. That sidesteps the `loadURDF`
+  bottleneck in the table below rather than paying it.
+- **`ReachEnv.reset` bypasses `PandaWithTool.reset`.** It calls
+  `initial_state.sample_xi` and then `robot.set_se2(xi...)`. Both draw the hand pose
+  from `WORKSPACE.shrink(RESET_MARGIN)` over `+-YAW_LIMIT`, so the difference is not
+  behavioural — it is that routing through `sample_xi` makes the sim reset and the
+  `xi` that `h` is evaluated at *the same draw*, rather than two implementations that
+  happen to agree. `set_se2` also teleports via `resetJointState`, which zeroes joint
+  velocities; that is what makes `h`'s all-zero `HAND_VEL` block exact rather than
+  approximate, so nothing in `reset` may call `sim.step()`.
+- **Sim and analytic `h` agree to 1.74 mm, not exactly.** `plan.md` asked for an
+  elementwise match; it is not achievable. `h` uses the *commanded* `xi.hand_se2`
+  while `robot.get_obs` reads the *measured* pose, and `set_se2`'s IK lands short.
+  Measured 2026-09-01 over 4 designs x 25 resets: 1.74 mm of position, 0.037 deg of
+  yaw, giving 1.50e-3 in observation units (`SCENE_BOX.scale` is exactly 1.0 m). So
+  the constant slices (`HAND_VEL`, `OBJ_XY`, `D_TARGET_OBJ`, `TASK_BLOCK`) are checked
+  at 1e-6 and the pose slices at 3e-3. Verified by injection at that tolerance: a 5 mm
+  tip error and a 5 mm-wrong `l1` are both caught, 2 mm of either is not. The floor is
+  the arm's residual, not a slack tolerance. Same trap as `reach_sweep.py --verify`.
+- **`D_TARGET_OBJ` is identically zero under REACH**, since `task.object_start` pins
+  the object at the target. Its test passes vacuously; sweep and push are its first
+  real exercise. Likewise `OBJ_XY` duplicates the target block.
+- **The env's reward and observation both read the tip from `se2.tip_from_hand`, never
+  `get_ee_position`.** FK and the closed form differ by the IK residual, so mixing them
+  would make the reward disagree with the observation the policy is conditioned on.
+  The object, by contrast, *is* read back off the body (`sim.get_base_position`) even
+  though a ghost never moves — that is already the code path sweep and push need.
+
 - **`h` is torch-only, with no numpy twin.** Two implementations of one formula is the
   drift this codebase has already paid for. `tip_offset_torch` / `tip_from_hand_torch`
   are pinned to `se2.tip_offset` / `se2.tip_from_hand` by test instead. They accept a

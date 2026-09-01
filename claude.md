@@ -8,3 +8,14 @@
 # Academic Constraints & Rules
 
 - **Documentation**: Write Google-style docstrings for every public function, noting mathematical notation or paper references where applicable.
+
+# Where things live
+
+- `reach_env.py` — `ReachEnv`, the gymnasium env and the entry point for the RL side.
+  One tool design per env; `reset(options={"task": g, "xi": xi})` pins the draw.
+- `initial_state.py` — the 21-dim observation layout, and `h(tau, g, xi)`, the analytic
+  twin of `ReachEnv.reset`. Change one and `tests/test_reach_env.py` will tell you.
+- `task.py` — `p(g)`, the reward, and the success rule. `config.py` — every constant,
+  each carrying its measurement date and the script that produced it.
+- `plan.md` / `memory.md` — what is next, and the decisions already made with their
+  reasons. Read both before starting.
