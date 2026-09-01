@@ -19,3 +19,8 @@
   each carrying its measurement date and the script that produced it.
 - `plan.md` / `memory.md` — what is next, and the decisions already made with their
   reasons. Read both before starting.
+
+# git
+
+Do not write any git commands, dont prompt for commits.
+

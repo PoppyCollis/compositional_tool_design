@@ -1,6 +1,23 @@
 # Plan: Tool Design → PyBullet Environment
 
-**Scope:** τ = (l₁, l₂, θ) in, Panda spawned in panda-gym with that tool rigidly welded into its grip, out. Nothing else. No learning, no gripper actuation, no attach/detach logic, no task, no reward.
+**Scope:** τ = (l₁, l₂, φ) in, Panda spawned in panda-gym with that tool rigidly welded into its grip, out. Nothing else. No learning, no gripper actuation, no attach/detach logic, no task, no reward.
+
+> **Two conventions moved after this plan was executed.** The document is otherwise the
+> build as shipped; these two are corrected in place below.
+>
+> **The third design parameter is `φ`, not `θ`.** `φ` is deflection from straight:
+> `φ = 0` is a straight rod (the longest tool), `|φ|` growing folds link 2 back. It is
+> drawn from a box, `φ ~ U[−PHI_MAX, PHI_MAX]` with `DesignPriorConfig.PHI_MAX = 1.9`,
+> not from a circle. The interior angle this document called `θ` is `π − |φ|`, exposed
+> as `tool_geometry.interior_angle`.
+>
+> **The `hand_to_tool` weld is no longer `rpy="0 0 0"`.** It carries
+> `GripperConfig.TOOL_MOUNT_PITCH` and `TOOL_MOUNT_ROLL` (both π/2), composed by
+> `tool_urdf._compose_mount_rpy`. The pitch swings the tool's long axis off the finger
+> axis so it extends perpendicular to the fingers — parallel to the ground when the
+> fingers point down — and the roll spins the tool about its own long axis so that
+> `φ`'s bend plane is the *ground* plane. Together they are why the tip's height carries
+> no τ dependence, which is what `se2.py` and the SE(2) controller are built on.
 
 ---
 
@@ -16,27 +33,27 @@ Everything downstream depends on these three choices. They are decisions, not de
 
 **Tool frame.** Origin at the grip point — the proximal end of l₁, coincident with the gripper's TCP. Link 1 extends along **+z** (the gripper's approach axis), so the tool points straight out of the hand.
 
-**θ is the interior angle at the elbow.** θ = π means the two links are collinear (a straight rod, maximum reach); θ → 0 means link 2 folds back alongside link 1. This matches the natural reading of "joining angle," but note it inverts the geometric meaning of your prior's endpoints — check this is what you intended.
+**φ is deflection from straight.** φ = 0 means the two links are collinear (a straight rod, maximum reach); |φ| → π would fold link 2 back alongside link 1. The interior angle at the elbow is π − |φ|. Deflection is the parameterisation the prior and the networks use, because it is a bounded interval with no wrap and its zero is a physically meaningful tool rather than a degenerate one.
 
-**Bend plane.** Fixed as the tool frame's x–z plane. A bend in any other plane is reachable by rotating joint 7, so this loses no generality.
+**Bend plane.** Fixed as the tool frame's x–z plane. A bend in any other plane is reachable by rotating joint 7, so this loses no generality. The weld's roll (see the header note) then puts that plane in the ground plane.
 
 Direction of link 2, and the tip:
 
 ```
 d1   = (0, 0, 1)
-d2   = (sin(π − θ), 0, cos(π − θ))
+d2   = (sin φ, 0, cos φ)
 p_tip = l1 · d1 + l2 · d2
 ```
 
-Sanity: θ = π → d2 = (0,0,1), straight. θ = π/2 → d2 = (1,0,0), perpendicular. θ → 0 → d2 = (0,0,−1), folded.
+Sanity: φ = 0 → d2 = (0,0,1), straight. φ = π/2 → d2 = (1,0,0), perpendicular. |φ| → π → d2 = (0,0,−1), folded. The prior stops at |φ| = 1.9, short of that last case.
 
-**Symmetry note:** θ and 2π − θ are mirror images equivalent under a joint-7 rotation, so a prior over [0, 2π) samples each distinct shape twice. [0, π] covers the same space.
+**Symmetry note:** +φ and −φ are mirror images equivalent under a joint-7 rotation, so they share an interior angle — which is why `tool_geometry.interior_angle` is unsigned. The prior samples the signed range all the same; the mirror pair is genuinely two distinct tools once the arm's yaw is clipped to ±YAW_LIMIT.
 
 ---
 
 ## 3. Structural decisions
 
-- **One rigid link, two collision shapes.** Both boxes live in a single `tool` link. PyBullet never collision-tests shapes within the same link, so the self-intersection at small θ is geometrically real but physically inert — no VHACD, no mesh repair, no degenerate-case special-casing.
+- **One rigid link, two collision shapes.** Both boxes live in a single `tool` link. PyBullet never collision-tests shapes within the same link, so the self-intersection at large |φ| is geometrically real but physically inert — no VHACD, no mesh repair, no degenerate-case special-casing.
 - **Primitives, not meshes.** Two `<box>` elements. Optional OBJ exporter for rendering only, off the critical path.
 - **Fingers welded to grip the box.** Convert the finger joints to `fixed` at exactly half the box width, so the render shows the tool actually held rather than floating between open fingers. Cosmetic — the weld carries all load. Disable finger↔tool collision.
 - **Torch boundary is explicit.** τ arrives as a tensor with `requires_grad=True`; geometry code takes plain floats. Detach at the boundary in one clearly-named place. PyBullet is not differentiable and nothing downstream should imply otherwise.
@@ -49,7 +66,7 @@ Sanity: θ = π → d2 = (0,0,1), straight. θ = π/2 → d2 = (1,0,0), perpendi
 
 τ → box specs (size + pose in tool frame), tip position, mass, inertia. Every function analytically testable in isolation.
 
-- Box *i* placed at its segment midpoint: box 1 at `(0, 0, l1/2)` with rpy `(0,0,0)`; box 2 at `l1·d1 + (l2/2)·d2` with rpy `(0, π−θ, 0)`.
+- Box *i* placed at its segment midpoint: box 1 at `(0, 0, l1/2)` with rpy `(0,0,0)`; box 2 at `l1·d1 + (l2/2)·d2` with rpy `(0, φ, 0)`.
 - **Mass:** constant density ρ, `mᵢ = ρ · w · h · lᵢ`. Clamp total mass at a configurable ceiling by scaling ρ down and emitting a warning, so no sampled design becomes uncontrollable.
 - **Inertia:** closed-form box tensor about each box's own centre → rotate into tool frame (`R I Rᵀ`) → parallel-axis shift to the combined COM → sum. The result is generally **non-diagonal**; URDF supports `ixy`/`ixz`/`iyz` and Bullet diagonalises internally, so emit the full tensor rather than dropping off-diagonal terms.
 
@@ -82,7 +99,7 @@ GUI script: sample τ from `ToolPrior`, build, spawn, hold a pose, and print ana
 ## 6. Tests
 
 **Analytic (no sim):**
-- `p_tip` matches hand-computed values at θ ∈ {0, π/2, π}.
+- `p_tip` matches hand-computed values at φ ∈ {0, ±π/2, ±PHI_MAX}.
 - Total mass equals ρ·w·h·(l₁+l₂).
 - Inertia tensor is symmetric positive-definite; degenerates correctly to the single-box closed form when l₂ → 0.
 
@@ -93,7 +110,7 @@ GUI script: sample τ from `ToolPrior`, build, spawn, hold a pose, and print ana
 
 **Robustness sweep:**
 - 100 τ sampled from `ToolPrior`: every one builds, loads, and steps 100 steps with no NaN and no velocity blowup.
-- Explicit degenerate cases: θ = π (straight), θ ≈ 0 (fully folded, boxes overlapping), l₁ and l₂ at both bounds.
+- Explicit degenerate cases: φ = 0 (straight), φ = ±PHI_MAX (maximum fold, boxes closest to overlapping), l₁ and l₂ at both bounds.
 - **Gravity hold test:** command a fully extended pose, step 2 s, assert steady-state joint error < 0.02 rad and report peak torque on joints 5–7 against their 12 N·m limit. This is the check that tells you whether a sampled design is physically holdable at all.
 
 ---

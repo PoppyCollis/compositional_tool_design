@@ -18,6 +18,12 @@
     zero tool-table contacts. The tool spans z in [0.01, 0.03] against measured
     transients of 2.2-3 mm, so the 1 cm clearance is real but has never been checked
     against an actual surface. Revisit with the self-collision item below.
+- [ ] **Observation layout 21 -> 24, before anything is trained.** See
+  `ai_docs/networks_and_design_gradient.md`: add the elbow (2) and `t / HORIZON` (1),
+  drop `tau` from both networks, and add the parameter-free feature layer. Touches
+  `se2.elbow_from_hand`, `PandaWithTool.get_obs` (`ROBOT_DIM` 9 -> 11),
+  `initial_state` (`OBS_DIM`, slice constants, `TAU_SLICES`, `h`), and `reach_env`.
+  Every one of these changes `OBS_DIM`, so they land together or not at all.
 - [ ] **PPO observation normalisation must be off, or verifiably frozen.** If the
   implementation wraps envs in `VecNormalize` or equivalent by default, the running
   mean/var makes `x -> x_tilde` a moving map. `initial_state.h` reapplies that exact

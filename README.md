@@ -1,3 +1,6 @@
-# compositional_tool_design
+# Compositional tool design
 
-Compositional tool design using RL
+Co-design and control of physical tools for robotic manipulation tasks using value-gradient design search (Bohlinger & Peters., 2026) and goal-conditioned RL. 
+
+Exploring a methods for invention via to compositional design.
+

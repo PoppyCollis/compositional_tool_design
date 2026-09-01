@@ -32,6 +32,13 @@ rather than sampled. They are fields of `g` all the same, so the objective and t
 success metric are read off one object and cannot drift apart — but they are excluded
 from `task.encode`, since the id they follow from is already in it.
 
+**That exclusion has an expiry.** It stops being correct the moment the `w_reach`
+anneal below starts. An annealed weight is constant within an episode, enters the
+reward, and is not recoverable from `x_t` — the membership rule above, verbatim — so it
+belongs in the encoding. Reserving the two slots now is free; adding them after a
+training run costs a retrain, which is the same argument that pre-declared the 3-wide
+one-hot. See `networks_and_design_gradient.md` §8.
+
 ---
 
 ## Sampling
@@ -72,6 +79,11 @@ Dense, per step, over a **fixed horizon with no early termination on success**
 which makes `V` jump discontinuously at the `ρ` boundary and puts success and failure
 returns on different scales. `V` is read as an energy over designs, so that
 comparability is worth more than the wall-clock an early exit would save.
+
+A fixed horizon with no termination is also why `t / HORIZON` is in the observation
+(`h_initial_state_map.md`): without it, return-to-go from a state depends on how many
+steps remain and `V` is fitting an average over `t`. Time-awareness and bootstrapping on
+truncation are both correct fixes and only one may be used — doing both double-counts.
 
 ### Success
 
@@ -131,7 +143,8 @@ shaping weights aren't.
   gripper alone satisfies the tip term at `τ`-independent cost, so a large `w_reach`
   lets the policy park on the object and stall.
 - Anneal `w_reach → 0`. If `∂f_ψ/∂τ` collapses under the anneal, the design signal was
-  the shaping term, not the task.
+  the shaping term, not the task. The anneal is also what forces `w_reach` and
+  `w_trans` into `task.encode` — see the note above.
 - Horizon must cover reach *plus* transport. With `w_trans` active the return no longer
   splits into transit + tail as assumed in §0.
 
@@ -145,5 +158,15 @@ found something generically good and the conditioning is cosmetic.
 
 Cheap in a 3D design space, and it fails loudly.
 
-Draw the three `g`s from the `0 < f < 1` band. At `f = 1` the posteriors *should*
-coincide, so a diagnostic run on easy targets would fail for the wrong reason.
+Two ways it fails for the wrong reason, and both must be closed before the result
+means anything.
+
+**Draw the three `g`s from the `0 < f < 1` band.** At `f = 1` the posteriors *should*
+coincide, so a diagnostic run on easy targets proves nothing.
+
+**Read the posteriors in `(o_x, o_y)`, not in raw `τ`.** Three design knobs, two
+outcomes that matter — how far out and at what bearing the tip sits — so every tool lies
+on a curve of physically different, exactly-equivalent tools, and `p(τ | g, 𝒪=1)`
+genuinely is a ridge rather than a mode. Plotted in `τ`, free diffusion along that ridge
+smears three distinct posteriors into looking alike. Project onto the tip offset
+`(o_x, o_y)` or its polar form `(R, α)` first. See `networks_and_design_gradient.md` §4.
