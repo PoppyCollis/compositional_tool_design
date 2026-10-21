@@ -2,10 +2,17 @@
 
 ## Current focus
 PPO on the reach task (`train_ppo.py`, stable-baselines3, SubprocVecEnv), with the env
-redrawing its tool from the prior every episode. The first 16-env, 2M-step run is the
-thing to read; `eval_ppo.py` stratifies its success by coverage band. Next: the separate
-Monte-Carlo fit of `V`, then the designer. Sweep and push regions are still open, and
-are what will need a support surface (see plan.md).
+redrawing its tool from the prior every episode. First run, 2026-10-21
+(`runs/reach_16env_2M`, 16 workers, 2M steps, 11 min at ~2950 steps/s): `eval_ppo.py`
+over 400 episodes with tau from the prior gives 85% success on targets the episode's
+own tool can reach (the greedy controller's best design, and above its 60-85% spread),
+98% in the every-design band, 41% in the discriminating band, 0% where no design
+reaches. Aggregate 30%, as the band mixing predicts. Stochastic and deterministic
+actions score the same to within noise, so the "which policy does V score" question
+(plan.md) is moot for reaching at this policy -- its mean actions saturate. The
+learning curve was still climbing noisily at 2M; a longer run is the cheap next step.
+Then the separate Monte-Carlo fit of `V`, then the designer. Sweep and push regions
+are still open, and are what will need a support surface (see plan.md).
 
 ## Key decisions
 
