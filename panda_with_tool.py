@@ -62,12 +62,14 @@ class PandaWithTool(PyBulletRobot):
         # network's extrapolation region. See TaskConfig.SCENE_BOX.
         self.scene = TaskConfig.SCENE_BOX.translate(base_position[:2])
 
-        urdf_path = panda_with_tool_urdf.write_panda_with_tool_urdf(tau)
+        # Kept so the env can discard the file once the body has loaded; see
+        # panda_with_tool_urdf.discard_generated_urdf.
+        self.urdf_path = panda_with_tool_urdf.write_panda_with_tool_urdf(tau)
         action_space = spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
         super().__init__(
             sim,
             body_name="panda_with_tool",
-            file_name=urdf_path,
+            file_name=self.urdf_path,
             base_position=base_position,
             action_space=action_space,
             joint_indices=JOINT_INDICES,
@@ -77,9 +79,12 @@ class PandaWithTool(PyBulletRobot):
     def setup(self):
         """Called once by PyBulletRobot.__init__, right after the URDF loads."""
         body_id = self.sim._bodies_idx[self.body_name]
-        self.tool_tip_link = get_link_index_by_name(body_id, "tool_tip")
-        self.hand_link = get_link_index_by_name(body_id, "panda_hand")
-        panda_with_tool_urdf.disable_finger_tool_collision(body_id)
+        # Address the live client explicitly: body ids are per client, and the env
+        # reconnects every time it rebuilds the tool.
+        client = self.sim.physics_client._client
+        self.tool_tip_link = get_link_index_by_name(body_id, "tool_tip", client)
+        self.hand_link = get_link_index_by_name(body_id, "panda_hand", client)
+        panda_with_tool_urdf.disable_finger_tool_collision(body_id, client)
         # Seeded here so set_action is safe even if called before the first reset;
         # reset overwrites it. At this point the arm is still in the URDF's default
         # pose, so the first clip will pull the target into the workspace.

@@ -12,7 +12,12 @@
 # Where things live
 
 - `reach_env.py` — `ReachEnv`, the gymnasium env and the entry point for the RL side.
-  One tool design per env; `reset(options={"task": g, "xi": xi})` pins the draw.
+  The tool is redrawn from the prior every `rebuild_every` episodes (rebuilt by client
+  teardown); `reset(options={"tau": tau, "task": g, "xi": xi})` pins the draw. The
+  horizon is `terminated`, never `truncated` — SB3 would bootstrap otherwise.
+- `train_ppo.py` / `eval_ppo.py` — stable-baselines3 PPO over `SubprocVecEnv`, CPU
+  only, no `VecNormalize`; evaluation stratified by coverage band. `networks.py` wraps
+  the feature layer as SB3's features extractor. `config.PPOConfig` holds the knobs.
 - `initial_state.py` — the 21-dim observation layout, and `h(tau, g, xi)`, the analytic
   twin of `ReachEnv.reset`. Change one and `tests/test_reach_env.py` will tell you.
 - `feature_layer.py` — `features(x)`, the parameter-free layer every network's

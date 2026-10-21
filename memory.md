@@ -1,11 +1,11 @@
 # Memory
 
 ## Current focus
-SE(2) control, the reach placement maps, the task generative model `p(g)` (`task.py`),
-the initial-state map `h` (`initial_state.py`), and now the gymnasium env
-(`reach_env.py`) whose reset is the simulator side of `h` — the sim-vs-analytic
-agreement test is closed. Next: PPO. Sweep and push regions are still open, and are
-what will need a support surface (see plan.md).
+PPO on the reach task (`train_ppo.py`, stable-baselines3, SubprocVecEnv), with the env
+redrawing its tool from the prior every episode. The first 16-env, 2M-step run is the
+thing to read; `eval_ppo.py` stratifies its success by coverage band. Next: the separate
+Monte-Carlo fit of `V`, then the designer. Sweep and push regions are still open, and
+are what will need a support surface (see plan.md).
 
 ## Key decisions
 
@@ -189,11 +189,48 @@ what will need a support surface (see plan.md).
   repo's unrelated `task.Task` NamedTuple; and its `step` terminates on success, which
   `TaskConfig.HORIZON` forbids. Copying ~80 lines of `gym.Env` beat patching all three
   — the same call already made for `PyBulletRobot` over `Panda`.
-- **The env owns its sim and one fixed `tau`.** One `PyBullet` client per env, built in
-  `__init__`, so `SubprocVecEnv` needs no changes here. `tau` never changes for the
-  env's life: the URDF is written and loaded once, and design diversity for PPO comes
-  from N parallel envs each holding one design. That sidesteps the `loadURDF`
-  bottleneck in the table below rather than paying it.
+- **The env redraws `tau` from the prior every `rebuild_every` episodes (default 1),
+  rebuilding by client teardown.** Supersedes "one fixed tau per env", which
+  contradicted `VGDS_spec.md` §3 and would have shown `V` only N designs. Three
+  findings behind the mechanics (2026-10-21):
+  - *`removeBody` + `loadURDF` leaks ~450 KB per cycle inside PyBullet* and never gives
+    it back -- reloading the same file leaks just as much, so it is not the file cache.
+    At K=1 that is ~45 GB per 10M env steps. Closing the client and opening a new one
+    is flat (+2.6 MB over 300 rebuilds here) at 49 ms per reset-with-rebuild, against
+    84 ms per 100-step episode, so K=1 costs about a third of a worker's time. It is
+    also the simplest code: `_rebuild` re-runs what `__init__` does.
+  - *`atexit` never runs in SubprocVecEnv workers*, so the URDF cleanup hook would
+    leave one 12 KB file per episode. `_rebuild` deletes each URDF the moment its body
+    has loaded (`panda_with_tool_urdf.discard_generated_urdf`); the hook stays as a
+    backstop for demos and sweeps.
+  - *`tau` is drawn from `self.np_random`* (`tool_design_prior.sample_tau`), not
+    `ToolPrior.sample`, whose torch generator `reset(seed=...)` cannot reach. Order is
+    seed -> tool -> task -> pose, so one seed reproduces the episode. A rebuild only
+    happens when the tool actually changes, so pinning the current tool is free.
+  - `reset(options={"tau": ...})` pins the tool, next to `"task"` and `"xi"`; the
+    sim-vs-h test and the §7 evaluation need it. `info["tau"]` and `info["target"]`
+    are tuples so `Monitor(info_keywords=...)` can write them to its CSV.
+  - `utils.helpers.get_link_index_by_name` and `disable_finger_tool_collision` now take
+    the client id. They defaulted to client 0, which only answered for the right body
+    while every client had loaded the same URDF in the same order.
+- **The horizon is `terminated`, never `truncated`.** SB3's vec envs turn `truncated`
+  into `info["TimeLimit.truncated"]`, and PPO then adds `gamma * V(x_T)` to the final
+  reward. With `t / HORIZON` already in the observation that double-counts (the "pick
+  one" in `h_initial_state_map.md`). The time limit is inside the MDP state, so it is a
+  true terminal; a test reads the flag back through SB3's own `DummyVecEnv`.
+- **No `VecNormalize`, rewards in metres at scale 1.** The frozen normalisation
+  contract rules the first out; the second is recorded rather than implicit because
+  the Langevin chain samples `exp(V)`, so a reward scale is a temperature -- give the
+  designer an explicit one instead. Both are written into each run's `config.json`.
+- **PPO runs on CPU with a core budget.** `train_ppo.py` blanks `CUDA_VISIBLE_DEVICES`
+  before importing torch, sets `OMP_NUM_THREADS=1` for the workers, and uses 16
+  workers + 8 learner threads of 48 cores so the rest stay free for other users of
+  the machine (the GPU belongs to someone else). SB3's own guidance is that PPO with
+  small MLPs is faster on CPU anyway.
+- **PyBullet echoes panda-gym's connect options with `printf`** -- three `argv[i]=`
+  lines per connect, below `sys.stdout` and fully buffered when stdout is a pipe.
+  `reach_env._quiet_c_stdout` redirects fd 1 for the connect and `fflush`es libc
+  before restoring it; without the flush the text comes out after the restore.
 - **`ReachEnv.reset` bypasses `PandaWithTool.reset`.** It calls
   `initial_state.sample_xi` and then `robot.set_se2(xi...)`. Both draw the hand pose
   from `WORKSPACE.shrink(RESET_MARGIN)` over `+-YAW_LIMIT`, so the difference is not
@@ -257,10 +294,15 @@ what will need a support surface (see plan.md).
 | `loadURDF`, caching off | 220 ms |
 | `loadURDF`, caching on | 40 ms |
 | `createMultiBody`, cached mesh shapes | **0.65 ms** |
+| one 100-step episode | 84 ms |
+| `ReachEnv` reset with rebuild (new client + load) | 49 ms, memory flat |
+| `removeBody` + `loadURDF` in one client | 45 ms, **leaks ~450 KB/cycle** |
+| PPO smoke run, 4 workers, incl. updates | 1400 env steps/s |
 
 Geometry is ~0.02% of a rollout — vectorising it is pointless. **`loadURDF` is the
-bottleneck**: tau is redrawn every episode reset, so at 64 envs x 512 steps with
-50-step episodes that is ~655 loads = 26.2 s against 0.80 s of stepping.
+bottleneck** and it is paid once per episode at `rebuild_every=1`: about a third of a
+worker's time. `createMultiBody` would be 60x cheaper but drops link names, joint
+limits and off-diagonal inertia; not worth it at this ratio (plan.md).
 
 ## Gotchas
 
@@ -278,7 +320,9 @@ bottleneck**: tau is redrawn every episode reset, so at 64 envs x 512 steps with
   `ensure_assets()`. Anything touching `PANDA_URDF_PATH` must call it first.
 - PyBullet caches URDFs **by path**. Safe to leave caching on only because
   `write_panda_with_tool_urdf` hashes tau into the filename.
-- Generated URDFs are ~12 KB each, one per unique tau. Cleaned up via `atexit`
-  (`cleanup_generated_urdfs`); without that they'd reach GBs over a training run.
+- Generated URDFs are ~12 KB each, one per unique tau. The env deletes each one right
+  after its body loads (`discard_generated_urdf`); the `atexit` hook
+  (`cleanup_generated_urdfs`) only covers callers that never rebuild, and does not run
+  in SubprocVecEnv workers at all.
 - Tests need `tests/conftest.py` to put the repo root on `sys.path` — otherwise
   bare `pytest` fails and only `python -m pytest` works.

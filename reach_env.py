@@ -22,18 +22,40 @@ for three independent reasons:
   truncating the accumulating negative reward makes ``V`` jump at the ``rho``
   boundary, and ``V`` is read as an energy across designs.
 
-``tau`` is fixed for the env's life. The URDF is written and loaded once, in
-``PandaWithTool.__init__``; design diversity for PPO comes from N parallel envs each
-holding one design, not from redrawing tau at reset.
+``tau`` is redrawn from the prior every ``rebuild_every`` episodes (``VGDS_spec.md``
+§3: designs are drawn fresh and never adapt, so one batch spans the design space).
+Changing the tool means a new URDF, and the rebuild is done by **closing the PyBullet
+client and opening a new one** rather than removing and reloading the body: measured
+2026-10-21, remove-and-reload leaks ~450 KB per cycle inside PyBullet and never gives
+it back (45 GB per 10M env steps at K=1), while a fresh client is flat at ~55 ms per
+rebuild. It is also the simplest code -- a rebuild re-runs what ``__init__`` does, and
+nothing from the old tool (body ids, collision filters) can leak across.
+
+Each generated URDF is deleted the moment its body has loaded. The ``atexit`` hook in
+``panda_with_tool_urdf`` never runs in SubprocVecEnv workers.
+
+The episode ends with ``terminated=True`` at ``TaskConfig.HORIZON``, not ``truncated``.
+The phase ``t / HORIZON`` is in the observation, so the horizon is part of the MDP state
+and a genuine terminal; SB3's vec envs turn ``truncated`` into
+``info["TimeLimit.truncated"]`` and PPO then bootstraps ``gamma * V(x_T)`` onto the
+last reward, which with the phase already in ``x`` double-counts
+(``h_initial_state_map.md``, "Episode phase").
 """
+import contextlib
+import ctypes
+import os
+import sys
+
 import numpy as np
 import gymnasium
 from gymnasium import spaces
 from panda_gym.pybullet import PyBullet
 
 import initial_state
+import panda_with_tool_urdf
 import se2
 import task as task_mod
+import tool_design_prior
 from config import TaskConfig
 from panda_with_tool import PandaWithTool
 
@@ -47,11 +69,37 @@ TARGET_RGBA = np.array([0.1, 0.8, 0.3, 0.4])
 TARGET_DISC_HEIGHT = 0.001
 
 
+@contextlib.contextmanager
+def _quiet_c_stdout():
+    """Silence PyBullet's C-level chatter while a client connects.
+
+    panda-gym passes its background colour as connect options and PyBullet echoes
+    them with printf -- three ``argv[i]=...`` lines per connect, below Python's
+    ``sys.stdout``. At one rebuild per episode across 16 workers that is the whole
+    training log, so file descriptor 1 is pointed at /dev/null for the connect only.
+    """
+    sys.stdout.flush()
+    saved = os.dup(1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        yield
+    finally:
+        # C stdio is fully buffered when stdout is a pipe or file, so the text would
+        # otherwise sit in libc's buffer and come out after the descriptor is restored.
+        ctypes.CDLL(None).fflush(None)
+        os.dup2(saved, 1)
+        os.close(devnull)
+        os.close(saved)
+
+
 class ReachEnv(gymnasium.Env):
-    """One tool design, one task type, driven in SE(2) against a ghost target.
+    """Tools drawn from the prior, one task type, driven in SE(2) against a ghost target.
 
     Args:
-        tau: Design parameters ``(l1, l2, phi)``. Fixed for the env's lifetime.
+        tau (optional): Design parameters ``(l1, l2, phi)`` of the first tool. Drawn
+            from the prior if None. Replaced at reset once ``rebuild_every`` episodes
+            have run on it, unless ``rebuild_every`` is None.
         task_id (task.TaskType): Which task instance to draw at reset. Only REACH
             has a start distribution; the others raise from ``task.TASK_PARAMS``.
         render_mode (str): ``"rgb_array"`` (headless) or ``"human"`` (GUI window).
@@ -59,25 +107,30 @@ class ReachEnv(gymnasium.Env):
         n_substeps (int): Physics substeps per env step. panda-gym's default of 20
             at its 1/500 s timestep gives 25 Hz control, which is what
             ``SE2Config.POS_SCALE``'s 0.01 m/step was chosen against.
+        rebuild_every (int, optional): Episodes per tool. 1 is the spec's "fresh
+            design every episode" and costs about a third of a worker's time in
+            rebuilds; None keeps the construction tool for the env's life, for demos
+            and sweeps that want to hold a design fixed.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, tau, task_id=task_mod.TaskType.REACH, render_mode="rgb_array",
-                 base_position=None, n_substeps=20):
-        self.tau = tuple(float(v) for v in tau)
+    def __init__(self, tau=None, task_id=task_mod.TaskType.REACH, render_mode="rgb_array",
+                 base_position=None, n_substeps=20, rebuild_every=1):
+        if rebuild_every is not None and rebuild_every < 1:
+            raise ValueError(f"rebuild_every must be >= 1 or None, got {rebuild_every}")
         self.task_id = task_mod.TaskType(task_id)
         self.render_mode = render_mode
+        self._base_position = base_position
+        self._n_substeps = n_substeps
+        self._rebuild_every = rebuild_every
 
-        # One client per env, so a later SubprocVecEnv needs no changes here.
-        self.sim = PyBullet(render_mode=render_mode, n_substeps=n_substeps)
+        self.sim = None
+        self.tau = None
+        # Unseeded draw for the first tool, like the reset below: an explicit
+        # reset(seed=...) is what pins an episode, and it redraws the tool anyway.
+        self._rebuild(self._sample_tau() if tau is None else tuple(float(v) for v in tau))
         self.metadata = dict(self.metadata, render_fps=1.0 / self.sim.dt)
-
-        self.robot = PandaWithTool(self.sim, self.tau, base_position=base_position)
-        # Read the normalisation box off the robot rather than re-deriving it, so the
-        # two blocks of the observation cannot be normalised against different boxes.
-        self.scene = self.robot.scene
-        self._build_scene()
 
         self.action_space = self.robot.action_space
         # Bounded rather than infinite so an out-of-range value is a detectable bug:
@@ -113,6 +166,39 @@ class ReachEnv(gymnasium.Env):
                 f"initial_state.OBS_DIM is {initial_state.OBS_DIM} but the env "
                 f"assembles {n_obs} values"
             )
+
+    # -- tool -------------------------------------------------------------------
+
+    def _sample_tau(self):
+        """``tau ~ p(tau)`` from the env's own generator, so one seed fixes the tool,
+        the task and the start pose together. ``ToolPrior.sample`` draws with torch's
+        RNG, which ``reset(seed=...)`` cannot reach."""
+        return tool_design_prior.sample_tau(self.np_random)
+
+    def _rebuild(self, tau):
+        """Stand up a fresh sim holding the tool ``tau``, discarding any old one.
+
+        A new client rather than ``removeBody`` + ``loadURDF`` in the old one: the
+        latter leaks ~450 KB per cycle inside PyBullet (module docstring). One client
+        per env, so SubprocVecEnv needs nothing further.
+
+        Args:
+            tau: Design parameters ``(l1, l2, phi)``, already a tuple of floats.
+        """
+        if self.sim is not None:
+            self.sim.close()
+        with _quiet_c_stdout():
+            self.sim = PyBullet(render_mode=self.render_mode, n_substeps=self._n_substeps)
+        self.robot = PandaWithTool(self.sim, tau, base_position=self._base_position)
+        # The body is loaded; the file has done its job. atexit would not run in a
+        # SubprocVecEnv worker, and at one tool per episode the files pile up.
+        panda_with_tool_urdf.discard_generated_urdf(self.robot.urdf_path)
+        # Read the normalisation box off the robot rather than re-deriving it, so the
+        # two blocks of the observation cannot be normalised against different boxes.
+        self.scene = self.robot.scene
+        self._build_scene()
+        self.tau = tau
+        self._episodes_on_tool = 0
 
     # -- scene ------------------------------------------------------------------
 
@@ -207,29 +293,51 @@ class ReachEnv(gymnasium.Env):
         ]).astype(np.float32)
 
     def _info(self, tip, obj):
+        # tau rides along so a Monitor wrapper can log return per design
+        # (info_keywords=("tau", ...)): once every episode has its own tool, an
+        # average return over episodes says nothing about which designs work.
         return {
             "is_success": task_mod.success(self._task, tip, obj),
-            "target": np.asarray(self._task.target, dtype=float).copy(),
+            # Tuples, not arrays: Monitor writes info_keywords straight into its CSV,
+            # and a tuple's repr parses back with ast.literal_eval.
+            "target": tuple(float(v) for v in np.asarray(self._task.target)[:2]),
+            "tau": self.tau,
         }
 
     # -- gymnasium API ----------------------------------------------------------
 
     def reset(self, seed=None, options=None):
-        """Draw ``g ~ p(g)`` and ``xi ~ p(xi | g)``, then place the arm at ``xi``.
+        """Draw ``tau``, ``g ~ p(g)`` and ``xi ~ p(xi | g)``, then place the arm at ``xi``.
+
+        The tool is redrawn once ``rebuild_every`` episodes have run on the current
+        one, in that order -- seed, tool, task, pose -- so a seed reproduces the whole
+        episode. A rebuild only happens when the tool actually changes: pinning the
+        current tool costs nothing, and two ``reset(seed=7)`` calls rebuild once.
 
         Args:
             seed (int, optional): Reseeds ``self.np_random``.
-            options (dict, optional): ``"task"`` and/or ``"xi"`` pin the draw. Used
-                by the sim-vs-analytic test, which needs both fixed to compare
-                against ``initial_state.h``, and by evaluation, which has to
-                stratify tasks by ``task_space.coverage`` band rather than take
-                what ``p(g)`` hands it.
+            options (dict, optional): ``"tau"``, ``"task"`` and/or ``"xi"`` pin the
+                draw. The sim-vs-analytic test needs all three fixed to compare
+                against ``initial_state.h``; evaluation pins ``"tau"`` to run the
+                policy with a designed tool and ``"task"`` to stratify targets by
+                ``task_space.coverage`` band rather than take what ``p(g)`` hands it.
 
         Returns:
             tuple: ``(observation, info)``.
         """
         super().reset(seed=seed)
         options = options or {}
+
+        tau = options.get("tau")
+        if tau is not None:
+            tau = tuple(float(v) for v in tau)
+        elif self._rebuild_every is not None and self._episodes_on_tool >= self._rebuild_every:
+            tau = self._sample_tau()
+        else:
+            tau = self.tau
+        if tau != self.tau:
+            self._rebuild(tau)
+        self._episodes_on_tool += 1
 
         task = options.get("task")
         if task is None:
@@ -257,12 +365,20 @@ class ReachEnv(gymnasium.Env):
     def step(self, action):
         """Advance one control step.
 
-        ``terminated`` is unconditionally False. Success is reported in ``info`` and
-        the episode always runs the full ``TaskConfig.HORIZON``: stopping early
-        truncates the accumulating negative reward, which makes ``V`` jump
-        discontinuously at the ``rho`` boundary and puts success and failure returns
-        on different scales. ``V`` is read as an energy over designs, so that
-        comparability matters more than the wall-clock an early exit would save.
+        Success never ends the episode. It is reported in ``info`` and the episode
+        always runs the full ``TaskConfig.HORIZON``: stopping early truncates the
+        accumulating negative reward, which makes ``V`` jump discontinuously at the
+        ``rho`` boundary and puts success and failure returns on different scales.
+        ``V`` is read as an energy over designs, so that comparability matters more
+        than the wall-clock an early exit would save.
+
+        The horizon is reported as ``terminated``, not ``truncated``, on purpose.
+        gymnasium reserves ``truncated`` for a time limit outside the MDP, and SB3 acts
+        on that reading: its vec envs set ``info["TimeLimit.truncated"]`` and PPO adds
+        ``gamma * V(x_T)`` to the final reward. Here ``t / HORIZON`` is in the
+        observation, so the limit is inside the state, the final state is a true
+        terminal with nothing to bootstrap from, and ``V(x_1)`` is the full-episode
+        return the designer reads. Doing both would double-count.
 
         Args:
             action (np.ndarray): ``(dx, dy, dyaw)``, each in [-1, 1].
@@ -278,8 +394,8 @@ class ReachEnv(gymnasium.Env):
         # Metres, not normalised units: task.reward is defined on the physical
         # distances the success tolerance rho is also expressed in.
         reward = task_mod.reward(self._task, tip, obj)
-        truncated = self._elapsed >= TaskConfig.HORIZON
-        return self._get_obs(), reward, False, truncated, self._info(tip, obj)
+        terminated = self._elapsed >= TaskConfig.HORIZON
+        return self._get_obs(), reward, terminated, False, self._info(tip, obj)
 
     def render(self):
         """Returns an RGB array in ``rgb_array`` mode, else None."""

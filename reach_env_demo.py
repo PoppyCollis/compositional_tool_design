@@ -63,12 +63,12 @@ def run_episode(env, task, gui):
     env.reset(options={"task": task})
     total, success = 0.0, False
     for _ in range(TaskConfig.HORIZON):
-        _, reward, _, truncated, info = env.step(greedy_action(env))
+        _, reward, terminated, _, info = env.step(greedy_action(env))
         total += reward
         success |= bool(info["is_success"])
         if gui:
             time.sleep(1.0 / 120.0)
-        if truncated:
+        if terminated:
             break
     gap = np.linalg.norm(env._tip_xy() - np.asarray(task.target, dtype=float)[:2])
     return total, success, gap
@@ -92,7 +92,9 @@ def reachable_targets(tau, n, np_random):
 
 def demo_tau(tau, gui):
     """Run both target strata for one design and print what happened."""
-    env = ReachEnv(tau, render_mode="human" if gui else "rgb_array")
+    # rebuild_every=None: this demo is per design, so the tool must not be redrawn
+    # at reset the way a training env's is.
+    env = ReachEnv(tau, render_mode="human" if gui else "rgb_array", rebuild_every=None)
     # Seed once: envs are entropy-seeded at construction so parallel workers do not
     # share a stream, which makes an unseeded demo irreproducible. Later resets go
     # unseeded and continue this stream, so the whole run is fixed by this one call.

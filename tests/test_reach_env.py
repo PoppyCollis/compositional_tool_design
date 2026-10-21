@@ -5,13 +5,17 @@ other test here guards a property the design objective quietly depends on: that 
 episode runs to a fixed horizon, that the reward is on metres, and that the reset
 distribution the env draws from is the one initial_state.sample_xi documents.
 """
+import os
+
 import numpy as np
 import pytest
 import torch
 
 import initial_state
+import panda_with_tool_urdf
 import se2
 import task as task_mod
+import tool_design_prior
 from config import DesignPriorConfig, SE2Config, TaskConfig
 from reach_env import ReachEnv
 
@@ -74,8 +78,16 @@ POSE_TOL = 3e-3
 
 @pytest.fixture(scope="module")
 def env():
-    """One env for the tests that do not care which design is loaded."""
-    instance = ReachEnv(TAUS[0])
+    """One env holding TAUS[0] for its life, for tests that read env.tau after a reset."""
+    instance = ReachEnv(TAUS[0], rebuild_every=None)
+    yield instance
+    instance.close()
+
+
+@pytest.fixture(scope="module")
+def redrawing_env():
+    """An env on the training setting: a fresh tool from the prior every episode."""
+    instance = ReachEnv(TAUS[0], rebuild_every=1)
     yield instance
     instance.close()
 
@@ -107,7 +119,9 @@ def test_reset_obs_matches_the_analytic_initial_state_map(tau):
         for _ in range(10):
             task = task_mod.sample_task(rng)
             xi = initial_state.sample_xi(rng, task)
-            obs, _ = environment.reset(seed=0, options={"task": task, "xi": xi})
+            # tau pinned too: the env redraws its tool at reset, and h must be
+            # evaluated at the tool the sim actually holds.
+            obs, _ = environment.reset(seed=0, options={"tau": tau, "task": task, "xi": xi})
             expected = initial_state.h(
                 torch.as_tensor(np.asarray(tau, dtype=float)), task, xi
             ).numpy()
@@ -144,12 +158,16 @@ def test_reset_pose_distribution_matches_panda_with_tool_reset(env):
         assert abs(xi.hand_se2[2]) <= SE2Config.YAW_LIMIT
 
 
-def test_episode_runs_to_horizon_without_terminating(env):
-    """Fixed HORIZON, no early termination, and the observation stays in its box.
+def test_episode_runs_to_horizon_and_terminates_there(env):
+    """Fixed HORIZON, no early termination, terminated (not truncated) at the end.
 
     Terminating on success would truncate the accumulating negative reward, making V
     jump at the rho boundary; V is read as an energy across designs, so the returns
     have to stay comparable. See TaskConfig.HORIZON.
+
+    The horizon must be reported as ``terminated``: SB3 reads ``truncated`` as a
+    time limit outside the MDP and bootstraps gamma * V(x_T) onto the last reward,
+    which double-counts now that the phase is in the observation.
     """
     env.action_space.seed(0)
     obs, _ = env.reset(seed=0)
@@ -159,8 +177,8 @@ def test_episode_runs_to_horizon_without_terminating(env):
 
     for step in range(1, TaskConfig.HORIZON + 1):
         obs, reward, terminated, truncated, _ = env.step(env.action_space.sample())
-        assert terminated is False
-        assert truncated == (step == TaskConfig.HORIZON)
+        assert terminated == (step == TaskConfig.HORIZON)
+        assert truncated is False
         assert env.observation_space.contains(obs), f"observation left its box at step {step}"
         assert reward <= 0.0
         # The phase is what makes a return-to-go from this state well defined; it has
@@ -224,11 +242,94 @@ def test_obs_dim_and_robot_dim_agree_with_a_sim_up(env):
     assert env.observation_space.shape == (initial_state.OBS_DIM,)
 
 
-def test_reset_is_deterministic_given_a_seed(env):
-    """Same seed, same episode: p(g) and p(xi | g) both draw from env.np_random."""
-    first, _ = env.reset(seed=7)
-    second, _ = env.reset(seed=7)
+def test_reset_is_deterministic_given_a_seed(redrawing_env):
+    """Same seed, same episode: p(tau), p(g) and p(xi | g) all draw from env.np_random.
+
+    The tool is the one that could slip: ToolPrior.sample uses torch's generator,
+    which reset(seed=...) never touches, so drawing from it would reproduce the task
+    and pose but not the tool.
+    """
+    first, info_first = redrawing_env.reset(seed=7)
+    second, info_second = redrawing_env.reset(seed=7)
     np.testing.assert_array_equal(first, second)
+    assert info_first["tau"] == info_second["tau"]
+
+
+def test_reset_redraws_the_tool_from_the_prior(redrawing_env):
+    """At rebuild_every=1 every unseeded reset holds a new design inside the prior box."""
+    taus = [redrawing_env.reset()[1]["tau"] for _ in range(4)]
+    assert len(set(taus)) == 4
+    for tau in taus:
+        np.testing.assert_array_less(np.array(tool_design_prior.LOWER) - 1e-12, tau)
+        np.testing.assert_array_less(tau, np.array(tool_design_prior.UPPER) + 1e-12)
+    # The sim really holds the new tool: the tip the robot computes for its own tau
+    # is the tip h would compute for the reported one.
+    assert redrawing_env.robot.tau == taus[-1]
+
+
+def test_options_tau_pins_the_tool(redrawing_env):
+    """reset(options={"tau": ...}) rebuilds to that design, and the tip slice shows it."""
+    rng = np.random.default_rng(3)
+    task = task_mod.sample_task(rng)
+    xi = initial_state.sample_xi(rng, task)
+    for tau in (TAUS[1], TAUS[3]):
+        obs, info = redrawing_env.reset(options={"tau": tau, "task": task, "xi": xi})
+        assert info["tau"] == tau
+        assert redrawing_env.robot.tau == tau
+        expected_tip = TaskConfig.SCENE_BOX.normalise_point(se2.tip_from_hand(xi.hand_se2, tau))
+        np.testing.assert_allclose(obs[initial_state.TIP_XY], expected_tip, atol=POSE_TOL)
+
+
+def test_rebuild_every_none_keeps_the_tool(env):
+    """The fixed-design mode demos and sweeps rely on never redraws."""
+    assert all(env.reset()[1]["tau"] == TAUS[0] for _ in range(3))
+
+
+def test_rebuild_every_k_counts_episodes():
+    """K episodes on each tool, the construction episode included."""
+    environment = ReachEnv(TAUS[0], rebuild_every=3)
+    try:
+        # __init__ ran episode 1 on TAUS[0]; episodes 2 and 3 keep it, 4 redraws.
+        assert environment.reset()[1]["tau"] == TAUS[0]
+        assert environment.reset()[1]["tau"] == TAUS[0]
+        fresh = environment.reset()[1]["tau"]
+        assert fresh != TAUS[0]
+        assert environment.reset()[1]["tau"] == fresh
+    finally:
+        environment.close()
+
+
+def test_generated_urdf_is_discarded_once_loaded(redrawing_env):
+    """No file left behind per episode: atexit never runs in a SubprocVecEnv worker."""
+    for _ in range(3):
+        redrawing_env.reset()
+        path = redrawing_env.robot.urdf_path
+        assert not os.path.exists(path)
+        assert path not in panda_with_tool_urdf._generated_paths
+
+
+def test_rebuilds_address_the_right_physics_client():
+    """Two envs in one process, one rebuilding: link lookups must hit their own client.
+
+    utils.helpers.get_link_index_by_name defaults to client 0, which only answers for
+    the right body while every client has loaded the same URDF in the same order.
+    Rebuilding disconnects and reconnects, so that coincidence cannot be relied on.
+    """
+    first, second = ReachEnv(TAUS[0], rebuild_every=None), ReachEnv(TAUS[1], rebuild_every=1)
+    try:
+        assert first.sim.physics_client._client != second.sim.physics_client._client
+        for _ in range(3):
+            second.reset()
+            for environment in (first, second):
+                obs, *_ = environment.step(np.ones(3))
+                assert len(obs) == initial_state.OBS_DIM
+                tip = se2.tip_from_hand(environment.robot.get_hand_se2(), environment.tau)
+                np.testing.assert_allclose(
+                    obs[initial_state.TIP_XY], TaskConfig.SCENE_BOX.normalise_point(tip), atol=1e-6
+                )
+    finally:
+        first.close()
+        second.close()
 
 
 def test_passes_the_gymnasium_env_checker():

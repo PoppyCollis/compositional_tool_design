@@ -119,10 +119,30 @@ def build_panda_with_tool_urdf(tau):
 _generated_paths = set()
 
 
+def discard_generated_urdf(path):
+    """Delete one generated URDF the moment its body has loaded.
+
+    This is the cleanup that actually runs during training. ``cleanup_generated_urdfs``
+    below is an ``atexit`` hook, and ``atexit`` never fires in SubprocVecEnv workers
+    (forked or forkserver processes exit without it), so an env that redraws tau every
+    episode would leave one ~12 KB file per episode in GENERATED_DIR -- about 100k
+    files per 10M env steps. Safe because PyBullet has already parsed the file, and
+    any later load of the same tau rewrites it first (``write_panda_with_tool_urdf``).
+
+    Args:
+        path (str): The path ``write_panda_with_tool_urdf`` returned.
+    """
+    _generated_paths.discard(path)
+    try:
+        os.remove(path)
+    except OSError:
+        pass  # already gone
+
+
 def cleanup_generated_urdfs():
-    """Remove the URDFs this process generated. Registered with atexit, because
-    tau is redrawn every episode reset: at 64 parallel envs that is hundreds of
-    ~12 KB files per PPO iteration piling up in GENERATED_DIR forever."""
+    """Remove the URDFs this process generated and did not discard. Registered with
+    atexit as a backstop for callers that load a tool and never rebuild (demos,
+    sweeps, tests); the training env discards each file itself, see above."""
     while _generated_paths:
         try:
             os.remove(_generated_paths.pop())
@@ -152,11 +172,16 @@ def write_panda_with_tool_urdf(tau, path=None):
     return path
 
 
-def disable_finger_tool_collision(body_id):
+def disable_finger_tool_collision(body_id, physics_client_id=0):
     """Disable collision between each finger and the tool link, resolving link
     indices by name (never hardcoded — the spliced links invalidate any fixed
-    index panda-gym assumes)."""
-    tool_idx = get_link_index_by_name(body_id, "tool")
+    index panda-gym assumes). Addressed to an explicit client, because body ids
+    are per client and an env that reconnects to rebuild its tool cannot rely on
+    being client 0."""
+    tool_idx = get_link_index_by_name(body_id, "tool", physics_client_id)
     for finger_name in FINGER_LINKS:
-        finger_idx = get_link_index_by_name(body_id, finger_name)
-        p.setCollisionFilterPair(body_id, body_id, finger_idx, tool_idx, enableCollision=0)
+        finger_idx = get_link_index_by_name(body_id, finger_name, physics_client_id)
+        p.setCollisionFilterPair(
+            body_id, body_id, finger_idx, tool_idx, enableCollision=0,
+            physicsClientId=physics_client_id,
+        )

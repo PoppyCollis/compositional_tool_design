@@ -250,3 +250,55 @@ class DesignPriorConfig:
     # Tip-z-above-mount is a deliberately conservative proxy: at phi=1.9 the tip
     # is also displaced 0.47 m in x, so it is nowhere near the fingers laterally.
     PHI_MAX = 1.9
+
+
+class PPOConfig:
+    """First-run PPO settings (stable-baselines3) for the reach task; see train_ppo.py.
+
+    Everything the designer later depends on is fixed here rather than fitted: no
+    observation or reward normaliser (``ai_docs/h_initial_state_map.md``, "The
+    normalisation contract"), rewards left in metres with no scale factor, so ``V``'s
+    units are summed metres of tip-target gap and the designer's temperature is an
+    explicit knob rather than one hidden in the reward.
+    """
+
+    # Parallel env workers (SubprocVecEnv), one PyBullet client each. Chosen with the
+    # learner's threads below to use ~24 of this machine's 48 cores and leave the rest
+    # free for other users (measured 2026-10-21: load 1.2, GPU held by another job).
+    N_ENVS = 16
+
+    # Steps per env per update. Need not align with the 100-step episodes: the phase
+    # is in the state and the horizon is a terminal, so a rollout cut mid-episode
+    # bootstraps correctly. 16 x 1024 = 16384 transitions, ~160 designs per update.
+    N_STEPS = 1024
+    BATCH_SIZE = 256
+    N_EPOCHS = 10
+    LEARNING_RATE = 3e-4
+
+    # 0.99 at HORIZON=100 discounts the tail of an episode to ~37%. GAMMA=1.0 is also
+    # well defined here (fixed horizon, phase in the observation) and would make V the
+    # exact undiscounted return; revisit when V is read as an energy.
+    GAMMA = 0.99
+    GAE_LAMBDA = 0.95
+    CLIP_RANGE = 0.2
+    ENT_COEF = 0.0
+
+    # Both heads. SB3's default 64x64 has to cover design x task x state here.
+    NET_ARCH = (256, 256)
+
+    TOTAL_TIMESTEPS = 2_000_000
+
+    # Episodes per tool per env; 1 is the spec's fresh design every episode and costs
+    # ~a third of a worker's time in rebuilds (reach_env.ReachEnv).
+    REBUILD_EVERY = 1
+
+    SEED = 0
+
+    # CPU, deliberately: SB3's guidance is that PPO with small MLPs is faster on CPU,
+    # and the GPU on this machine belongs to someone else. config.DEVICE is for the
+    # designer, not for this.
+    DEVICE = "cpu"
+    TORCH_THREADS = 8
+
+    CHECKPOINT_EVERY = 200_000  # env steps between saved checkpoints
+    RUNS_DIR = "runs"           # gitignored

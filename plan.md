@@ -24,10 +24,9 @@
   `(B, 24) -> (B, 29)`: `x` followed by `(o_x, o_y, l1, l2)/s` and `phi/PHI_MAX`.
   Pure torch, so the first line of each network's `forward` -- not an
   `ObservationWrapper`.
-- [ ] **The design-space encoding.** The rest of
-  `ai_docs/networks_and_design_gradient.md` §7. Deferred to the PPO pass because both
-  of its readers are the PPO pass. Drop `tau` from both networks at the same time
-  (§1) -- there is nothing to drop it from yet.
+- [x] **The design-space encoding.** Closed by the PPO pass: both networks take `x`
+  only, through `networks.ToolFeatureExtractor` (the feature layer); there is no `tau`
+  input to drop.
 - [ ] **Walk the ridge, once `V` exists.** Three design knobs, two outcomes that
   matter, so every tool sits on a curve of exactly-equivalent tools --
   `(0.120, 0.180, 0)` and `(0.180, 0.120, 0)` share a tip. Before the elbow they shared
@@ -35,12 +34,10 @@
   elbows are 6 cm apart, so flatness along the ridge is a test rather than a
   tautology, and a tilt is a preference invented from noise in the returns. See
   `ai_docs/networks_and_design_gradient.md` §4.
-- [ ] **PPO observation normalisation must be off, or verifiably frozen.** If the
-  implementation wraps envs in `VecNormalize` or equivalent by default, the running
-  mean/var makes `x -> x_tilde` a moving map. `initial_state.h` reapplies that exact
-  map at design time against a frozen `V`; a map that drifted during training makes the
-  reapplication wrong, silently. Same for reward normalisation if `V`'s scale is to
-  mean anything as an energy.
+- [x] **PPO observation normalisation is off.** `train_ppo.py` wraps nothing in
+  `VecNormalize` and says why; rewards stay in metres at scale 1, recorded in each
+  run's `config.json`. The horizon is `terminated` so SB3 does not bootstrap on top of
+  the phase in the observation.
 - [ ] **Evaluation must stratify by coverage band.** 39.7% of uniformly sampled targets
   are reachable by no design in the prior, 11.1% by every design, and only the 49.2%
   between carries design signal. An aggregate success rate over `TARGET_BOX` mostly
@@ -56,18 +53,33 @@
   the contact survives as the object crosses the reach boundary. Note a straight rod
   *can* hook off its own end cap, so a tip-position-only test scores it almost as well
   as an L and will not separate designs.
-- [ ] Stand up `SubprocVecEnv` with per-env tau; confirm scaling against the numbers above.
-- [ ] Wire the PPO loop and the outer design-optimisation loop.
+- [x] Stand up `SubprocVecEnv`, with tau redrawn every episode by client teardown
+  (memory.md has the leak finding). Smoke run: 1400 env steps/s on 4 workers.
+- [x] Wire the PPO loop (`train_ppo.py`); the first 16-env, 2M-step run is what to read.
+- [ ] **Fit the final `V` separately.** PPO's critic is a training aid: fit for a few
+  epochs on recent data, targets partly its own guesses (GAE). After PPO, freeze `pi`,
+  collect rollouts with tau from the prior, and regress `V` on Monte-Carlo returns --
+  exact targets here, since the horizon is fixed and time is in the state. Decide
+  whether `V` scores the stochastic policy (SB3's `log_std_init=0` is std 1 on
+  actions in [-1, 1]) or the deterministic one §7 evaluates; it must be the one that
+  is run. The same data gives a held-out set for the §7 checks.
+- [ ] **Reward scale as a designer temperature.** With rewards in metres a tool whose
+  tip stops 5 cm short loses ~2-3.5 units of return, i.e. 1/7 to 1/30 of the density
+  of one that reaches. Give the Langevin chain an explicit temperature rather than
+  rescaling rewards.
+- [ ] Wire the outer design-optimisation loop. The entry point for gradients is
+  `model.policy.predict_values` on a torch `x` with `requires_grad` (`networks.py`);
+  SB3's `predict` is `no_grad` and numpy.
 
 ## Deferred — revisit only if profiling says so
 
 **Replacing per-episode `loadURDF` with cached shapes + `createMultiBody`** is 62x
-faster (0.65 ms vs 40 ms), but the 26 s/iteration figure motivating it assumes tau is
-redrawn every reset — an assumption about a training loop that doesn't exist yet.
-Profile first. If it does bite, hold tau fixed for K episodes per env before rewriting
-anything: K=10 cuts the cost 10x for a few lines, and 64 envs still give 64 designs per
-update. `createMultiBody` is the last resort — it drops link names, joint limits, and
-off-diagonal inertia (silently), and needs a second construction path kept in sync.
+faster (0.65 ms vs 40 ms). Measured against the real loop (2026-10-21): a reset with
+rebuild is 49 ms against an 84 ms episode, so `rebuild_every=1` costs about a third of
+a worker's time -- affordable, and `--rebuild-every 10` cuts it to ~5% for free if it
+ever matters. `createMultiBody` stays the last resort: it drops link names, joint
+limits, and off-diagonal inertia (silently), and needs a second construction path kept
+in sync. Note the rebuild must go through a new client; `removeBody` + reload leaks.
 
 **`workspace_sweep.py` accepts self-intersecting arm configurations.** It screens on
 the achieved hand pose, not on whether the arm passes through itself getting there —

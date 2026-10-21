@@ -4,3 +4,5 @@ pytest
 pybullet
 panda-gym
 matplotlib
+stable-baselines3==2.9.0
+tensorboard
