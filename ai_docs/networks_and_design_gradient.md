@@ -31,20 +31,26 @@ effect is `(dV/dx)(dh/dtau)` -- the term `VGDS_spec.md` §5 already calls non-ze
 the reason `h` must be differentiable. It is a full 3-vector; `l1`, `l2` and `phi` each
 get a component, and the Langevin chain of §6 runs unchanged.
 
-What is dropped is the *other* term. `dV/dtau` asks: hold the picture of the world
-frozen -- hand here, tip exactly there -- and now make the handle 1 cm longer. That is
-a tool whose length disagrees with where its own tip is, which is not a state the
-simulator can produce. Every training sample has the two in agreement, because both
-came out of the same rollout. So the network answers that question by extrapolation,
-smoothly and with nothing behind it, and the invented number lands in the design
-gradient.
+**What dropping the input does not buy** (corrected 2026-10-21). This section used to
+argue that a `tau` input adds a term, `dV/dtau` at fixed `x`, that no training sample
+constrains, and that dropping the input removes it. Wrong: the designer never moves
+`tau` with `x` held fixed. It moves `tau` and `x_1 = h(tau)` together, so the design
+gradient is the slope of `V` along the surface of physically consistent `(x, tau)`, and
+that depends only on `V`'s values on the surface, however `tau` is fed in. Each of the
+two terms sees off-surface behaviour; their sum does not. Toy check: adding
+`k*(x - hand - l1)` to `V` changes nothing on any real state, shifts the two terms by
+`+k` and `-k`, and leaves the sum alone. The feature layer (§6) hands `tau`, recovered
+from `x`, back to the network anyway, and the chain rule through it rebuilds the same
+two-term structure. Either way the gradient is only as good as `V`'s fit to real
+states, which is what §4 checks.
 
-Formally, the true `V^pi` is only defined on the surface `{ (x, tau) : o(x) = o(tau) }`
-where `o` is the tool's tip offset in the hand frame. Both terms of the two-path
-gradient differentiate *off* that surface; only their sum stays on it. The sum is
-therefore a difference of two quantities the data never constrained, and two networks
-with identical training loss can hand back different `grad_tau f`. Removing the `tau`
-input removes the split: one path, and it is the one anchored to the physics.
+**What it does buy**, both engineering:
+
+- **One source of truth.** The network cannot be handed a `tau` that disagrees with
+  `x`, e.g. an env built with one tool and a different `tau` passed alongside.
+- **Nothing to keep in sync.** The design gradient is plain autograd through
+  `h -> features -> V`; no separately computed partial can be forgotten or
+  double-counted.
 
 **This holds for sweeping and pushing too**, once the elbow is in. The tool is the
 polyline `(hand, elbow, tip)`, and all of it is then in `x`.
@@ -179,7 +185,8 @@ gym `ObservationWrapper` -- a wrapper would compute numpy features for training 
 need a second, torch copy for the designer.
 
 Everything here is a function of `x`, so gradients still flow through `x` and only
-through `x` -- the convenience of a `tau` input without reopening §1. Checked against
+through `x` -- the convenience of a `tau` input with `x` kept as the single source of
+truth (§1). Checked against
 2000 random `(tau, hand pose)` draws: worst recovery error 1.3e-15, i.e. exact. In
 float32, which the networks run in, the floor is ~1e-6.
 
@@ -229,19 +236,15 @@ Docs, done:
   to it), states `f_psi(tau, g) = E_xi[V_psi(h(tau, g, xi))]`, says three `tau`-dependent
   slices rather than two, and carries the episode-phase and feature-layer sections.
 - `task_encoding_g.md`: the diagnostic must be read in `(o_x, o_y)` because the
-  posterior is a ridge, and §8's `w_reach`/`w_trans` expiry is written down where the
-  anneal is specified.
+  posterior is a ridge, and §8's `w_reach`/`w_trans` question is closed there.
 - `tool_to_env_plan.md`: its `theta` (interior angle, on a circle) restated as `phi`
   (deflection, on a box), and the tool-mount weld's pitch and roll noted.
 
 ## 8. Still open
 
-- **`w_reach`, `w_trans` slots in `task.encode`.** Derived from `task_id` today, so
-  correctly excluded. That stops being true the moment `task_encoding_g.md`'s anneal
-  starts: an annealed weight is constant within an episode, enters the reward, and is
-  not recoverable from `x_t` -- the membership rule, verbatim. Reserving the slots is
-  free now and costs a retrain later, the same argument that pre-declared the 3-wide
-  one-hot.
+- ~~`w_reach`, `w_trans` slots in `task.encode`.~~ Closed 2026-10-21: no anneal.
+  `w_reach = 0` for sweep and push, so the weights stay a function of `task_id` and
+  out of the encoding (`task_encoding_g.md`).
 - **Whether `h` should model tool inertia at all.** §1 says the information is in `x`;
   it says nothing about whether the analytic `h` should reflect it. It currently does
   not, and for a teleported reset with zero velocities there is nothing to reflect.

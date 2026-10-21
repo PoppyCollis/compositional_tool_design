@@ -262,7 +262,9 @@ class PandaWithTool(PyBulletRobot):
         Returns:
             np.ndarray: 11 values --
                 hand position, scene-normalised (2),
-                hand yaw as (cos, sin) so it is continuous across +-pi (2),
+                hand yaw as (cos, sin) (2) -- not for continuity, since yaw is
+                    clipped to +-YAW_LIMIT = pi/2 and never nears +-pi; one-to-one
+                    there, and still correct if YAW_LIMIT ever widens,
                 hand planar velocity and yaw rate, scaled (3),
                 elbow position, scene-normalised (2),
                 tool-tip position, scene-normalised (2).

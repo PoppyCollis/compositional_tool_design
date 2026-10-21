@@ -22,7 +22,7 @@ free field for reaching is the target location.
 - Simulator: PyBullet
 - Robot: Franka Panda, 7 DoF.
 - Control mode: **SE(2) operational space.** The action is 3-dimensional — `(dx, dy, dyaw)` of the hand — accumulated onto an internal target, clipped into a measured workspace rectangle, and solved by IK into the 7 joint position targets that PyBullet's internal PD then tracks. Height, roll and pitch are constants, so the tool is always low and parallel to the ground. Superseded the original 7-DoF joint-delta action (`q_target = q_current + σ·a`): for a task where the tool must stay flat, six of those dimensions are spent rediscovering the joint manifold that keeps it flat. See `panda_with_tool.py`, `se2.py` and `workspace_sweep.py`.
-- Reward: dense, negative distance from the tool tip to g — now in the table plane, since the tip's height is a constant independent of τ.
+- Reward: dense, negative distance from the tool tip to g — now in the table plane, since the tip's height is a constant independent of τ. Sweeping and pushing will use object→target only, with no shaping term (`task_encoding_g.md`).
 - Randomise the initial arm configuration q₀ — drawn as an SE(2) pose from inside the workspace rectangle, not as raw joint angles, so no episode starts pressed against a boundary. That draw is `ξ`, and `h` takes it as an argument rather than fixing it.
 - Tools have mass: PyBullet gives this for free if the tool is an actual body in the scene rather than an analytic offset.
 - **The simulator need not be differentiable, but the post-design state map `x₁ = h(τ, g, ξ)` must be.** Implement `h` in the autodiff framework instead of reading it off PyBullet. This is cheap because only the tool part needs gradients: with the arm teleported to `ξ`'s pose the hand is a constant, and
@@ -108,13 +108,12 @@ observed in the batch:
 L(φ) = E [ ( V_φ(x_t) − R_t )² ]
 ```
 
-**No `τ` input, to either network.** `τ` is recoverable from `x` (§2), so `V_φ(x)` is
-the same function — but the true `V^π` is only defined on the surface where the two
-agree, and a network given both inputs answers `∂V/∂τ` by extrapolating off that
-surface, where no training sample ever lived. Two critics with identical training loss
-would then hand back different design gradients. Dropping the input removes the split.
-The full argument, and why mass and inertia are not an exception, is
-`networks_and_design_gradient.md` §1.
+**No `τ` input, to either network.** `τ` is recoverable from `x` (§2), so `V_φ(x)`
+loses nothing. The reasons are engineering, not a better gradient: the network cannot
+be handed a `τ` that disagrees with `x`, and the design gradient is plain autograd
+through `h` with no separate partial to keep in sync. See
+`networks_and_design_gradient.md` §1, which also says why mass and inertia are not an
+exception.
 
 ---
 

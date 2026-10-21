@@ -6,12 +6,12 @@
     x1 = h(tau, g, xi)      deterministic, differentiable in tau
 
 This is the bridge from design to value. ``V`` scores states; ``h`` turns a tool into
-one, so the design objective is ``f(tau, g) = E_xi[ V(h(tau, g, xi), tau, g) ]`` and
+one, so the design objective is ``f(tau, g) = E_xi[ V(h(tau, g, xi)) ]`` and
 
-    grad_tau E = -[ dV/dtau + (dV/dx1) . (dh/dtau) ]
+    grad_tau E = -(dV/dx1) . (dh/dtau)
 
-The second term is the whole reason this module is written in torch rather than read
-off the simulator: PyBullet's kinematics are not differentiable, and only the tool
+One term: ``V`` has no ``tau`` input (``networks_and_design_gradient.md`` §1). It is
+the whole reason this module is written in torch rather than read off the simulator: PyBullet's kinematics are not differentiable, and only the tool
 part needs to be. With the arm teleported to ``xi``'s pose the hand is a constant, and
 ``tau`` enters ``x1`` through exactly three slices -- the elbow, the tip, and the
 ``obj - tip`` vector that hangs off the tip. ``test_initial_state.py`` asserts that

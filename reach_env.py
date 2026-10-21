@@ -4,7 +4,7 @@
 lands an episode in. This module produces the same vector out of PyBullet, and every
 subsequent state of the episode besides. The design objective
 
-    f(tau, g) = E_xi[ V(h(tau, g, xi), tau, g) ]
+    f(tau, g) = E_xi[ V(h(tau, g, xi)) ]
 
 is only meaningful if the two agree, so ``tests/test_reach_env.py`` pins them against
 each other rather than trusting that both happen to call ``Box.normalise_point`` on

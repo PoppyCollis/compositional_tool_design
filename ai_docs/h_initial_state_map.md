@@ -79,9 +79,9 @@ layer is where that assertion belongs.
 vector, so `V(x)` already sees the target; do not condition the policy on `g`
 separately (`VGDS_spec.md` §2).
 
-**`obj − tip` and `target − obj`, not `target − tip`.** The reward is
-`−[w_reach·d(tip,obj) + w_trans·d(obj,target)]`, so those two are the terms the policy
-is differentiating. Their sum, `target − tip`, points somewhere useful in neither
+**`obj − tip` and `target − obj`, not `target − tip`.** The reward is `−d(tip,obj)` in
+reaching and `−d(obj,target)` in sweeping and pushing (`task_encoding_g.md`), so those
+two are the terms the policy is differentiating. Their sum, `target − tip`, points somewhere useful in neither
 sweeping nor pushing. For reaching the object is at the target, so the first coincides
 with `target − tip` and the second is identically zero.
 

@@ -24,5 +24,5 @@
 
 # git
 
-Do not write any git commands, dont prompt for commits.
+Write git commits automatically when appropriate section of work is complete, then prompt me to git push.
 

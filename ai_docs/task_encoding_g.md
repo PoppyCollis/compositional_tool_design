@@ -32,12 +32,9 @@ rather than sampled. They are fields of `g` all the same, so the objective and t
 success metric are read off one object and cannot drift apart — but they are excluded
 from `task.encode`, since the id they follow from is already in it.
 
-**That exclusion has an expiry.** It stops being correct the moment the `w_reach`
-anneal below starts. An annealed weight is constant within an episode, enters the
-reward, and is not recoverable from `x_t` — the membership rule above, verbatim — so it
-belongs in the encoding. Reserving the two slots now is free; adding them after a
-training run costs a retrain, which is the same argument that pre-declared the 3-wide
-one-hot. See `networks_and_design_gradient.md` §8.
+**The exclusion is permanent** because nothing is annealed (decided 2026-10-21, see Task
+instances). If a weight ever varies within a task type, the membership rule puts it in
+`task.encode`.
 
 ---
 
@@ -106,8 +103,8 @@ success, including one where the tip never left the far side of the table. See
 |       | object start (drawn in `h`) | `p_target`   | `w_reach` | `w_trans` | object                       |
 | ----- | --------------------------- | ------------ | --------- | --------- | ---------------------------- |
 | Reach | **at `p_target`**           | anywhere     | 1         | 0         | ghost sphere, no collision   |
-| Sweep | out of reach                | in reach     | ε_s       | 1         | real                         |
-| Push  | in reach                    | out of reach | ε_p       | 1         | real                         |
+| Sweep | out of reach                | in reach     | 0         | 1         | real                         |
+| Push  | in reach                    | out of reach | 0         | 1         | real                         |
 
 Only reach is implemented. Sweep and push are declared in `task.TaskType` so the
 one-hot in `task.encode` has its final width — adding a type later would change the
@@ -115,36 +112,35 @@ observation size and invalidate every trained `V` — but they have no entry in
 `TASK_PARAMS` and no start distribution, so both raise rather than silently inheriting
 reaching's weights.
 
-In reaching, tip→object *is* the task; in sweeping and pushing it is shaping only.
+In reaching, tip→object *is* the task. **Sweeping and pushing have no shaping term**
+(`w_reach = 0`, decided 2026-10-21): the reward is `−d(obj, target)` alone, so `V`
+encodes the task and nothing else. A tip term would bias the design gradient towards
+tools whose tip makes the contact, whereas a hook pulls with the inside of its bend.
+
 Sweep vs. push is not a field — it is the relation between the start distribution and
-`p_target` across the workspace boundary.
+`p_target` across the workspace boundary. With equal weights the two share reward and
+dynamics, differing only in the (observable) start, so the one-hot's sweep/push split
+is redundant to the agent. It is kept at its final width anyway.
 
 The reaching object is virtual and immovable. If it were a real body, a tool that
 reached it would knock it away and the agent would be punished for succeeding.
 
-### Curriculum alternative.
+### Exploration without shaping
 
-Instead of a persistent shaping term, set w_reach = 0 and curriculum on the start
-distribution: begin with the object at the workspace boundary, where the arm alone
-nearly reaches it, and translate it outward (sweep) or inward (push) as success rate
-crosses a threshold. This gives dense early signal without rewarding tools that merely
-point at the object, and removes the need to tune ε_s, ε_p, or an annealing schedule.
+There is no signal until the tool first moves the object. First try one wide start
+distribution that includes starts just beyond the arm's reach, the same choice as
+`p_target ~ U(TARGET_BOX)`. Stage a curriculum only if learning does not take off, and
+then:
 
-Worth noting it moves the tuning rather than eliminating it — you now have an
-advancement threshold and a step size, and the curriculum can stall if you widen too
-fast. But the parameters are ones you can read off a success-rate curve, which the
-shaping weights aren't.
+- **Advance on achievable success, not the aggregate.** As the object moves out, fewer
+  prior designs can reach it at all, so a raw threshold stalls on the design mix.
+- **The stage is a training-time parameter of `task.object_start`**, never
+  `τ`-dependent, and frozen at the final stage for design time, where `V` is read.
 
 ---
 
 ## Constraints
 
-- `p(g)` samples `w_reach` **per task type**. Require `ε_p < ε_s`: in pushing the
-  gripper alone satisfies the tip term at `τ`-independent cost, so a large `w_reach`
-  lets the policy park on the object and stall.
-- Anneal `w_reach → 0`. If `∂f_ψ/∂τ` collapses under the anneal, the design signal was
-  the shaping term, not the task. The anneal is also what forces `w_reach` and
-  `w_trans` into `task.encode` — see the note above.
 - Horizon must cover reach *plus* transport. With `w_trans` active the return no longer
   splits into transit + tail as assumed in §0.
 
