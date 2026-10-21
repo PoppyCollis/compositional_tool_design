@@ -165,31 +165,6 @@ def test_a_straight_rod_puts_the_elbow_on_the_hand_tip_line():
     assert cross == pytest.approx(0.0, abs=1e-12)
 
 
-def test_tau_is_exactly_recoverable_from_x1():
-    """The claim decision 1 of networks_and_design_gradient.md rests on.
-
-    l1 from hand -> elbow, (l2, phi) from elbow -> tip, all in the hand frame. This
-    arithmetic moves into the parameter-free feature layer when that module lands
-    (section 6 of the same doc) -- it should be lifted from here, not written twice.
-    """
-    g, xi = fixture()
-    for tau in TAUS:
-        x1 = ini.h(tensor(tau), g, xi).detach().numpy()
-        c, s = x1[ini.HAND_YAW]
-        d_elbow = (x1[ini.ELBOW_XY] - x1[ini.HAND_XY]) * BOX.scale
-        d_tip = (x1[ini.TIP_XY] - x1[ini.HAND_XY]) * BOX.scale
-
-        # Rotate into the hand frame. The y row inverts tip_from_hand's Rz(psi) @
-        # (ox, -oy); the elbow has no y component to flip.
-        l1 = c * d_elbow[0] + s * d_elbow[1]
-        ox = c * d_tip[0] + s * d_tip[1]
-        oy = s * d_tip[0] - c * d_tip[1]
-        l2 = np.hypot(ox - l1, oy)
-        phi = np.arctan2(oy, ox - l1)
-
-        assert np.allclose([l1, l2, phi], tau, atol=1e-12)
-
-
 def test_the_phase_block_is_zero_because_h_is_the_start_of_an_episode():
     g, xi = fixture()
     x1 = ini.h(tensor(TAUS[0]), g, xi).detach().numpy()

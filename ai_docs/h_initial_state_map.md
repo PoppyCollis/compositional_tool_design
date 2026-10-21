@@ -142,8 +142,8 @@ normalisation if `V`'s scale is to mean anything as an energy.
 
 ### The feature layer is part of this contract
 
-The parameter-free feature layer (`networks_and_design_gradient.md` §6, which carries
-the code) recovers `(o_x, o_y, l₁, l₂, φ)` from `x` by fixed arithmetic and prepends
+The parameter-free feature layer (`feature_layer.features`; the derivation is
+`networks_and_design_gradient.md` §6) recovers `(o_x, o_y, l₁, l₂, φ)` from `x` by fixed arithmetic and prepends
 them to the network input, shared by actor and critic. Everything it computes is a
 function of `x`, so it adds no `τ` input and reopens nothing in §1 — it only saves the
 networks from learning a rotation they are handed for free.

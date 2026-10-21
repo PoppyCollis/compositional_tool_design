@@ -20,15 +20,14 @@
     against an actual surface. Revisit with the self-collision item below.
 - [x] **Observation layout 21 -> 24.** Landed: the elbow at `7:9`, `t / HORIZON` at
   `23:24`, `ROBOT_DIM` 9 -> 11, `TAU_SLICES` three wide, `dh/dtau` now rank 3.
-- [ ] **The parameter-free feature layer, and the design-space encoding.** The rest of
-  `ai_docs/networks_and_design_gradient.md` §6-§7. A module holding `features(x)` --
-  fixed arithmetic recovering `(o_x, o_y, l1, l2, phi)` from `x` -- shared by actor,
-  critic and designer, and frozen under the same rule as `SCENE_BOX`. Deferred to the
-  PPO pass because both of its readers are the PPO pass. The recovery arithmetic
-  already exists, tested, in
-  `tests/test_initial_state.test_tau_is_exactly_recoverable_from_x1`: lift it, do not
-  rewrite it. Drop `tau` from both networks at the same time (§1) -- there is nothing
-  to drop it from yet.
+- [x] **The parameter-free feature layer.** Landed as `feature_layer.features`,
+  `(B, 24) -> (B, 29)`: `x` followed by `(o_x, o_y, l1, l2)/s` and `phi/PHI_MAX`.
+  Pure torch, so the first line of each network's `forward` -- not an
+  `ObservationWrapper`.
+- [ ] **The design-space encoding.** The rest of
+  `ai_docs/networks_and_design_gradient.md` §7. Deferred to the PPO pass because both
+  of its readers are the PPO pass. Drop `tau` from both networks at the same time
+  (§1) -- there is nothing to drop it from yet.
 - [ ] **Walk the ridge, once `V` exists.** Three design knobs, two outcomes that
   matter, so every tool sits on a curve of exactly-equivalent tools --
   `(0.120, 0.180, 0)` and `(0.180, 0.120, 0)` share a tip. Before the elbow they shared

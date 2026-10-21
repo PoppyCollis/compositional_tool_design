@@ -15,6 +15,8 @@
   One tool design per env; `reset(options={"task": g, "xi": xi})` pins the draw.
 - `initial_state.py` — the 21-dim observation layout, and `h(tau, g, xi)`, the analytic
   twin of `ReachEnv.reset`. Change one and `tests/test_reach_env.py` will tell you.
+- `feature_layer.py` — `features(x)`, the parameter-free layer every network's
+  `forward` starts with: `x` plus the tool's dimensions, read back off it in torch.
 - `task.py` — `p(g)`, the reward, and the success rule. `config.py` — every constant,
   each carrying its measurement date and the script that produced it.
 - `plan.md` / `memory.md` — what is next, and the decisions already made with their

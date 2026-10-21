@@ -173,9 +173,15 @@ def features(x):
     return torch.cat([x, ox, oy, l1, l2, phi / PHI_MAX], dim=-1)
 ```
 
+Implemented as `feature_layer.features`, batched over any leading dimensions
+(`(B, 24) -> (B, 29)`), and called first in each network's `forward` rather than in a
+gym `ObservationWrapper` -- a wrapper would compute numpy features for training and
+need a second, torch copy for the designer.
+
 Everything here is a function of `x`, so gradients still flow through `x` and only
 through `x` -- the convenience of a `tau` input without reopening §1. Checked against
-2000 random `(tau, hand pose)` draws: worst recovery error 1.3e-15, i.e. exact.
+2000 random `(tau, hand pose)` draws: worst recovery error 1.3e-15, i.e. exact. In
+float32, which the networks run in, the floor is ~1e-6.
 
 `(ox, oy)` is the sufficient statistic for reaching: for that task `V` depends on the
 design through those two numbers and nothing else. `l1, l2, phi` are inert for reaching
@@ -201,16 +207,16 @@ Code, done -- every item moved `OBS_DIM`, so they landed together:
 - `initial_state`: `OBS_DIM` 21 -> 24, slice constants renumbered, `PHASE` added,
   `TAU_SLICES` gains the elbow, `h` emits the elbow and a zero phase.
 - `reach_env._get_obs` appends `t / HORIZON`; the sim-vs-analytic test covers both new
-  slices, and `test_initial_state` now asserts `dh/dtau` is rank 3 and that `tau`
-  round-trips out of `x_1` to 1e-12.
+  slices, and `test_initial_state` now asserts `dh/dtau` is rank 3.
+- `feature_layer.py` (§6), with the recovery arithmetic lifted out of the test that
+  used to carry it. `tests/test_feature_layer.py` asserts `tau` round-trips out of
+  `x_1` (1e-12 in float64, 1e-5 in float32), gradchecks the layer, and pins the
+  Jacobian of `features(h(tau))`'s design block to `diag(1/s, 1/s, 1/PHI_MAX)`.
 
 Code, still to do:
 
-- New module for the feature layer (§6) and the design-space encoding. Deferred to the
-  PPO pass deliberately: it is read by both the RL stack and the designer, and neither
-  exists yet. The recovery arithmetic currently sits in
-  `tests/test_initial_state.test_tau_is_exactly_recoverable_from_x1` and should be
-  lifted from there rather than written twice.
+- The design-space encoding. Deferred to the PPO pass deliberately: it is read by both
+  the RL stack and the designer, and neither exists yet.
 - Drop `tau` from both networks (§1) -- vacuous until there are networks.
 
 Docs, done:

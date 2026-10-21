@@ -225,6 +225,11 @@ what will need a support surface (see plan.md).
   are pinned to `se2.tip_offset` / `se2.tip_from_hand` by test instead. They accept a
   batched tau, unlike `tool_geometry` -- that rule exists because geometry feeds URDF
   generation one body at a time, and `h` touches no URDF.
+- **The feature layer runs in the networks' `forward`, never in an `ObservationWrapper`.**
+  Same reason as `h`: a wrapper computes numpy features for training, and the designer
+  would need a second, torch copy to differentiate through. `feature_layer.features` is
+  the one copy. Its recovery is exact in float64 (~1e-15) but floors at ~1e-6 in float32,
+  so its tests take their tolerance from the dtype rather than one hard-coded 1e-12.
 - **`s_start` cannot depend on tau.** Superseded in form -- there is no `s_start` field
   any more -- but the reason survives and now applies to `task.object_start`: a
   tau-conditioned start distribution would make `g` depend on the design and break the
